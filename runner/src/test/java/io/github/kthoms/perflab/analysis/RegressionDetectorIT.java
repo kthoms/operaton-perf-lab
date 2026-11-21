@@ -143,12 +143,38 @@ class RegressionDetectorIT {
   }
 
   @Test
-  void noVerdictWithFewerThanFiveRuns() throws Exception {
-    baseline("s", 100, 100, 100, 100);
+  void noVerdictWhenPreviousRunHasFewerThanFiveBaselineRuns() throws Exception {
+    baseline("s", 100, 100, 100, 100); // previous run's baseline: 4 runs
     ok(200);
-    long second = ok(210);
+    long second = ok(210); // own baseline: 5 runs, enough
     assertThat(detector.analyze(second)).isEmpty();
     assertThat(storedRegressions()).isZero();
+  }
+
+  @Test
+  void noVerdictWhenCurrentRunHasFewerThanFiveBaselineRuns() throws Exception {
+    // the previous run is the only earlier run of the series; the other runs are other kpis/segments
+    baseline("other", NOISY);
+    run("s", "SUCCESS", KPI, "{\"module\":\"engine\"}", 100);
+    run("s", "SUCCESS", KPI, "{\"module\":\"engine\"}", 100);
+    run("s", "SUCCESS", KPI, "{\"module\":\"engine\"}", 100);
+    ok(200);
+    long second = ok(210); // own baseline: 4 runs
+    assertThat(detector.analyze(second)).isEmpty();
+  }
+
+  @Test
+  void sustainedStepIsStoredOnce() throws Exception {
+    baseline("s", NOISY);
+    ok(200);
+    long first = ok(205);
+    assertThat(detector.analyze(first)).hasSize(1);
+    for (int i = 0; i < 4; i++) {
+      long next = ok(205 + i);
+      detector.analyze(next);
+      detector.analyze(next);
+    }
+    assertThat(storedRegressions()).isEqualTo(1);
   }
 
   @Test

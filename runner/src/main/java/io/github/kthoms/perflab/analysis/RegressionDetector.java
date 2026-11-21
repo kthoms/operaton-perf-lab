@@ -20,7 +20,10 @@ import javax.sql.DataSource;
  * Flags a series (kpi, dims without repetition/iteration, branch, db, segment) when this run and
  * the previous run both exceed {@code median + max(3 * MAD, 3% of median)} of their own baseline:
  * the 10 successful runs of the same series and segment before them. A single outlier is never
- * flagged, and fewer than 5 baseline runs give no verdict.
+ * flagged, and fewer than 5 baseline runs give no verdict. Because the previous run needs its own
+ * 5-run baseline too, a series needs at least 6 earlier runs before the first verdict is possible.
+ * The verdict is returned on every analysis, but a regression row is stored only once per step
+ * change: not when an earlier run since the last good one already has one.
  */
 public class RegressionDetector {
 
@@ -67,10 +70,13 @@ public class RegressionDetector {
       for (Map.Entry<Series, List<Double>> e : currentSeries(c, runId).entrySet()) {
         Series series = e.getKey();
         List<RunValue> history = history(c, run, series);
-        Regression r = evaluate(run, series, median(e.getValue()), history);
-        if (r != null) {
-          store(c, r);
-          flagged.add(r);
+        Verdict v = evaluate(run, series, median(e.getValue()), history);
+        if (v != null) {
+          // a sustained step change is stored once: not again if a run since the last good one has a row
+          if (!flaggedSince(c, v.stepRunIds, v.regression.seriesKey)) {
+            store(c, v.regression);
+          }
+          flagged.add(v.regression);
         }
       }
       return flagged;
@@ -80,7 +86,7 @@ public class RegressionDetector {
   }
 
   /** history is newest first: [0] is the previous run, [0..9] this run's baseline, [1..10] the previous run's. */
-  private static Regression evaluate(Run run, Series series, double value, List<RunValue> history) {
+  private static Verdict evaluate(Run run, Series series, double value, List<RunValue> history) {
     if (history.isEmpty()) {
       return null;
     }
@@ -100,19 +106,26 @@ public class RegressionDetector {
       return null;
     }
     String lastGood = null;
+    List<Long> stepRunIds = new ArrayList<>();
     for (RunValue b : baseline) {
       if (b.value <= threshold) {
         lastGood = b.commitSha;
         break;
       }
+      stepRunIds.add(b.runId);
     }
     String url =
         lastGood == null
             ? null
             : "https://github.com/operaton/operaton/compare/" + lastGood + "..." + run.commitSha;
-    return new Regression(
-        run.id, series.key(run), series.kpi, series.dims, value, median, lastGood, url);
+    return new Verdict(
+        new Regression(
+            run.id, series.key(run), series.kpi, series.dims, value, median, lastGood, url),
+        stepRunIds);
   }
+
+  /** stepRunIds: earlier runs of the series newer than the last one under the threshold. */
+  private record Verdict(Regression regression, List<Long> stepRunIds) {}
 
   private static double threshold(List<Double> baseline) {
     double median = median(baseline);
@@ -142,7 +155,7 @@ public class RegressionDetector {
     }
   }
 
-  private record RunValue(String commitSha, double value) {}
+  private record RunValue(long runId, String commitSha, double value) {}
 
   private static Run loadRun(Connection c, long runId) throws SQLException {
     try (PreparedStatement ps =
@@ -190,7 +203,7 @@ public class RegressionDetector {
   private static List<RunValue> history(Connection c, Run run, Series series)
       throws SQLException, JsonProcessingException {
     String sql =
-        "select r.commit_sha, array_agg(m.value) from run r join measurement m on m.run_id=r.id"
+        "select r.id, r.commit_sha, array_agg(m.value) from run r join measurement m on m.run_id=r.id"
             + " join run cur on cur.id=?"
             + " where r.status='SUCCESS' and r.kind=cur.kind and r.branch=cur.branch"
             + " and r.db is not distinct from cur.db and r.segment=cur.segment"
@@ -205,10 +218,25 @@ public class RegressionDetector {
       try (ResultSet rs = ps.executeQuery()) {
         List<RunValue> out = new ArrayList<>();
         while (rs.next()) {
-          Double[] vs = (Double[]) rs.getArray(2).getArray();
-          out.add(new RunValue(rs.getString(1), median(Arrays.asList(vs))));
+          Double[] vs = (Double[]) rs.getArray(3).getArray();
+          out.add(new RunValue(rs.getLong(1), rs.getString(2), median(Arrays.asList(vs))));
         }
         return out;
+      }
+    }
+  }
+
+  private static boolean flaggedSince(Connection c, List<Long> runIds, String seriesKey)
+      throws SQLException {
+    if (runIds.isEmpty()) {
+      return false;
+    }
+    try (PreparedStatement ps =
+        c.prepareStatement("select 1 from regression where series_key=? and run_id = any(?)")) {
+      ps.setString(1, seriesKey);
+      ps.setArray(2, c.createArrayOf("bigint", runIds.toArray()));
+      try (ResultSet rs = ps.executeQuery()) {
+        return rs.next();
       }
     }
   }
