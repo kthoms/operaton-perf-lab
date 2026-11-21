@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -68,6 +69,7 @@ public class Backup implements IdleHook {
   private static final System.Logger LOG = System.getLogger(Backup.class.getName());
   private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmm");
   private static final Pattern DUMP_NAME = Pattern.compile("perflab-(\\d{8}-\\d{4})\\.dump");
+  private static final Pattern PARTIAL_NAME = Pattern.compile("perflab-\\d{8}-\\d{4}\\.dump\\.partial");
   private static final Pattern DB_NAME = Pattern.compile("^jdbc:postgresql://[^/]+/([^?/]+)");
 
   private final PerfLabConfig config;
@@ -133,11 +135,17 @@ public class Backup implements IdleHook {
     Instant now = clock.instant();
     Path target = dir.resolve("perflab-" + STAMP.format(now.atZone(clock.getZone())) + ".dump");
     Path partial = dir.resolve(target.getFileName() + ".partial");
+    String dbName;
+    try {
+      dbName = dbName(config.resultsDb().jdbcUrl());
+    } catch (IllegalArgumentException e) {
+      throw new BackupException(e.getMessage(), e);
+    }
     var cmd =
         List.of(
             "docker", "compose", "-f", composeFile.toString(), "exec", "-T", "results-db",
             "pg_dump", "-U", config.resultsDb().user(), "-Fc",
-            dbName(config.resultsDb().jdbcUrl()));
+            dbName);
     try {
       deleteStalePartials(dir);
       CommandRunner.Result result = runner.run(cmd, partial, TIMEOUT);
@@ -187,7 +195,15 @@ public class Backup implements IdleHook {
           .filter(
               p -> {
                 Matcher m = DUMP_NAME.matcher(p.getFileName().toString());
-                return m.matches() && LocalDateTime.parse(m.group(1), STAMP).isBefore(cutoff);
+                if (!m.matches()) {
+                  return false;
+                }
+                try {
+                  return LocalDateTime.parse(m.group(1), STAMP).isBefore(cutoff);
+                } catch (DateTimeParseException e) {
+                  LOG.log(Level.WARNING, "retention: ignoring unparseable dump name " + p);
+                  return false;
+                }
               })
           .forEach(Backup::deleteQuietly);
     } catch (IOException e) {
@@ -197,7 +213,9 @@ public class Backup implements IdleHook {
 
   private static void deleteStalePartials(Path dir) throws IOException {
     try (Stream<Path> files = Files.list(dir)) {
-      files.filter(p -> p.getFileName().toString().endsWith(".dump.partial")).forEach(Backup::deleteQuietly);
+      files
+          .filter(p -> PARTIAL_NAME.matcher(p.getFileName().toString()).matches())
+          .forEach(Backup::deleteQuietly);
     }
   }
 

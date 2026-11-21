@@ -260,4 +260,46 @@ class BackupTest {
     assertThat(Backup.dbName("jdbc:postgresql://h/perflab?ssl=false&x=y")).isEqualTo("perflab");
     assertThatThrownBy(() -> Backup.dbName("jdbc:postgresql://h:5432")).isInstanceOf(IllegalArgumentException.class);
   }
+
+  @Test
+  void onlyOwnStalePartialsAreCleanedUp() throws Exception {
+    Path dir = Files.createDirectories(tmp.resolve("backups"));
+    Path other = Files.writeString(dir.resolve("other.dump.partial"), "foreign");
+    Path stale = Files.writeString(dir.resolve("perflab-20261120-0300.dump.partial"), "stale");
+
+    backup(config(dir, 14), new FakeRunner(), new MemoryLog()).run();
+
+    assertThat(other).exists();
+    assertThat(stale).doesNotExist();
+  }
+
+  @Test
+  void unparseableDumpNameDoesNotFailASuccessfulBackup() throws Exception {
+    Path dir = Files.createDirectories(tmp.resolve("backups"));
+    Path weird = Files.writeString(dir.resolve("perflab-99999999-9999.dump"), "x");
+    Path old = Files.writeString(dir.resolve("perflab-20200101-0000.dump"), "old");
+
+    Path dump = backup(config(dir, 14), new FakeRunner(), new MemoryLog()).run();
+
+    assertThat(dump).exists();
+    assertThat(weird).exists();
+    assertThat(old).doesNotExist();
+    assertThat(logged).anyMatch(r -> r.getLevel() == Level.WARNING && r.getMessage().contains("unparseable"));
+  }
+
+  @Test
+  void badJdbcUrlIsABackupExceptionAndBacksOff() throws Exception {
+    Path dir = Files.createDirectories(tmp.resolve("backups"));
+    var cfg = new PerfLabConfig(tmp.resolve("data"), dir, 14, "u",
+        new PerfLabConfig.Db("jdbc:postgresql:perflab", "perflab", "pw"), List.of(), List.of(), null);
+    var runner = new FakeRunner();
+    var backup = backup(cfg, runner, new MemoryLog());
+
+    backup.betweenJobs(NOW); // must not throw
+    backup.betweenJobs(NOW.plusSeconds(60));
+
+    assertThat(runner.commands).isEmpty();
+    assertThatThrownBy(backup::run).isInstanceOf(Backup.BackupException.class);
+    assertThat(backup.due(NOW.plusSeconds(60))).as("backed off").isFalse();
+  }
 }

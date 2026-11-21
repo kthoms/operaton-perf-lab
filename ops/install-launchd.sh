@@ -42,6 +42,11 @@ plutil -lint "$TARGET"
 
 if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
   launchctl bootout "$DOMAIN/$LABEL"
+  # bootout is asynchronous: wait (max ~5 s) until the service is gone before bootstrapping
+  for _ in $(seq 1 25); do
+    launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break
+    sleep 0.2
+  done
 fi
 launchctl bootstrap "$DOMAIN" "$TARGET"
 echo "Installed and started $LABEL (logs: $LOGDIR)"
