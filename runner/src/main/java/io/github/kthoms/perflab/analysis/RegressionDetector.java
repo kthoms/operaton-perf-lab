@@ -18,7 +18,8 @@ import javax.sql.DataSource;
 
 /**
  * Flags a series (kpi, dims without repetition/iteration, branch, db, segment) when this run and
- * the previous run both exceed {@code median + max(3 * MAD, 3% of median)} of their own baseline:
+ * the previous run both exceed {@code median + max(3 * MAD, 3% of median, absolute floor of the
+ * kpi)} of their own baseline:
  * the 10 successful runs of the same series and segment before them. A single outlier is never
  * flagged, and fewer than 5 baseline runs give no verdict. Because the previous run needs its own
  * 5-run baseline too, a series needs at least 6 earlier runs before the first verdict is possible.
@@ -49,6 +50,18 @@ public class RegressionDetector {
   static final int MIN_BASELINE = 5;
   static final double MAD_FACTOR = 3.0;
   static final double MIN_RELATIVE_MARGIN = 0.03;
+  /**
+   * Smallest margin per KPI, in the KPI's unit, so tiny or quantized series (Surefire times in 0.1 s
+   * steps, wall time in whole seconds, sub-millisecond benchmark medians) do not raise false alarms:
+   * test.module.duration 1 s, build.total.wall 30 s, benchmark.median.duration 1 ms,
+   * benchmark.operation.median.duration 0.5 ms. The Grafana noise bands use the same floors.
+   */
+  static final Map<String, Double> ABSOLUTE_FLOOR =
+      Map.of(
+          "test.module.duration", 1.0,
+          "build.total.wall", 30.0,
+          "benchmark.median.duration", 1.0,
+          "benchmark.operation.median.duration", 0.5);
 
   private static final ObjectMapper JSON = new ObjectMapper();
   private static final TypeReference<Map<String, String>> DIMS_TYPE = new TypeReference<>() {};
@@ -95,14 +108,14 @@ public class RegressionDetector {
       return null;
     }
     double median = median(values(baseline));
-    double threshold = threshold(values(baseline));
+    double threshold = threshold(series.kpi, values(baseline));
     if (value <= threshold) {
       return null;
     }
     List<RunValue> previousBaseline =
         history.subList(1, Math.min(1 + BASELINE_SIZE, history.size()));
     if (previousBaseline.size() < MIN_BASELINE
-        || history.get(0).value <= threshold(values(previousBaseline))) {
+        || history.get(0).value <= threshold(series.kpi, values(previousBaseline))) {
       return null;
     }
     String lastGood = null;
@@ -127,11 +140,12 @@ public class RegressionDetector {
   /** stepRunIds: earlier runs of the series newer than the last one under the threshold. */
   private record Verdict(Regression regression, List<Long> stepRunIds) {}
 
-  private static double threshold(List<Double> baseline) {
+  private static double threshold(String kpi, List<Double> baseline) {
     double median = median(baseline);
     List<Double> deviations = baseline.stream().map(x -> Math.abs(x - median)).toList();
     double mad = median(deviations);
-    return median + Math.max(MAD_FACTOR * mad, MIN_RELATIVE_MARGIN * median);
+    double margin = Math.max(MAD_FACTOR * mad, MIN_RELATIVE_MARGIN * median);
+    return median + Math.max(margin, ABSOLUTE_FLOOR.getOrDefault(kpi, 0.0));
   }
 
   static double median(List<Double> values) {

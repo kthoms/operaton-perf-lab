@@ -221,4 +221,73 @@ class RegressionDetectorIT {
     assertThat(found.get(0).value()).isEqualTo(260);
     assertThat(found.get(0).seriesKey()).endsWith("|benchmark=a");
   }
+
+  record Value(String kpi, String dims, double value) {}
+
+  /** Inserts one run with many measurements in a batch; time increases with each call. */
+  long runWith(List<Value> values) throws SQLException {
+    long run = run("s", "SUCCESS", KPI, "{\"module\":\"_\"}");
+    try (Connection c = db.dataSource().getConnection();
+        PreparedStatement ps =
+            c.prepareStatement(
+                "insert into measurement(run_id, kpi, value, dims) values (?,?,?,?::jsonb)")) {
+      for (Value v : values) {
+        ps.setLong(1, run);
+        ps.setString(2, v.kpi());
+        ps.setDouble(3, v.value());
+        ps.setString(4, v.dims());
+        ps.addBatch();
+      }
+      ps.executeBatch();
+    }
+    return run;
+  }
+
+  @Test
+  void jitteredQuantizedSeriesRaiseNoFalseAlarms() throws Exception {
+    // ~200 series as real runs produce them: Surefire times in 0.1 s steps, a wall time in whole
+    // seconds, benchmark medians in 0.1 ms steps; all jitter stays below the absolute floors
+    java.util.Random random = new java.util.Random(42);
+    for (int n = 0; n < 30; n++) {
+      List<Value> values = new java.util.ArrayList<>();
+      for (int m = 0; m < 190; m++) {
+        double base = 0.1 * (m % 20 + 1);
+        values.add(new Value("test.module.duration", "{\"module\":\"m" + m + "\"}",
+            Math.round((base + 0.1 * random.nextInt(8)) * 10) / 10.0));
+      }
+      values.add(new Value("build.total.wall", "{}", 600 + random.nextInt(25)));
+      for (int b = 0; b < 5; b++) {
+        values.add(new Value("benchmark.median.duration", "{\"benchmark\":\"b" + b + "\"}",
+            Math.round((0.4 + 0.1 * random.nextInt(9)) * 10) / 10.0));
+      }
+      for (int o = 0; o < 4; o++) {
+        values.add(new Value("benchmark.operation.median.duration", "{\"operation\":\"o" + o + "\"}",
+            Math.round((0.2 + 0.1 * random.nextInt(4)) * 10) / 10.0));
+      }
+      detector.analyze(runWith(values));
+    }
+    assertThat(storedRegressions()).isZero();
+  }
+
+  @Test
+  void absoluteFloorStillLetsRealStepsThrough() throws Exception {
+    baseline("s", 2.0, 2.1, 2.0, 1.9, 2.0, 2.1, 2.0, 2.0, 1.9, 2.0); // seconds, MAD tiny
+    ok(2.9); // 0.9 s slower: under the 1 s floor
+    long within = ok(2.9);
+    assertThat(detector.analyze(within)).isEmpty();
+    ok(3.2);
+    long above = ok(3.2);
+    assertThat(detector.analyze(above)).hasSize(1);
+  }
+
+  @Test
+  void absoluteFloorsPerKpi() {
+    assertThat(RegressionDetector.ABSOLUTE_FLOOR)
+        .containsEntry("test.module.duration", 1.0)
+        .containsEntry("build.total.wall", 30.0)
+        .containsEntry("benchmark.median.duration", 1.0)
+        .containsEntry("benchmark.operation.median.duration", 0.5);
+    assertThat(RegressionDetector.ABSOLUTE_FLOOR.keySet())
+        .containsExactlyInAnyOrderElementsOf(RegressionDetector.KPIS);
+  }
 }
