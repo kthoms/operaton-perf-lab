@@ -57,6 +57,8 @@ class DaemonTest {
   List<Long> afterRunIds;
   List<Instant> idleHookCalls;
   Duration predictedIdle = Duration.ofHours(8);
+  RuntimeException recordFailure;
+  final List<Instant> sampleTimes = new ArrayList<>();
   final List<LogRecord> daemonLog = new ArrayList<>();
   final Logger daemonLogger = Logger.getLogger(Daemon.class.getName());
   final Handler capture =
@@ -285,6 +287,51 @@ class DaemonTest {
 
     assertThat(jobs.get(1).status()).isEqualTo(JobStatus.QUEUED);
     assertThat(runner.commands).isEmpty();
+  }
+
+  @Test
+  void runningJobRecordsActivitySamplesAtMostOncePerPollInterval() {
+    PerfLabConfig config = mainOnly(dataDir); // poll 60s, activity check 30s
+    runner.script =
+        (token, every) -> {
+          for (int i = 0; i < 10; i++) {
+            clock.advance(every);
+            token.isCancelled();
+            token.isCancelled(); // throttled, records nothing
+          }
+          return new ProcessRunner.Result(0, false, Duration.ofMinutes(5));
+        };
+    Daemon daemon = daemon(config);
+
+    daemon.tick(services(config));
+
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.DONE);
+    assertThat(sampleTimes)
+        .containsExactly(
+            T0, T0.plusSeconds(60), T0.plusSeconds(120), T0.plusSeconds(180), T0.plusSeconds(240),
+            T0.plusSeconds(300));
+  }
+
+  @Test
+  void failingSampleRecordingNeverAffectsCancellation() {
+    PerfLabConfig config = mainOnly(dataDir);
+    recordFailure = new IllegalStateException("activity_sample insert failed");
+    List<Boolean> observed = new ArrayList<>();
+    runner.script =
+        (token, every) -> {
+          clock.advance(Duration.ofMinutes(2));
+          observed.add(token.isCancelled());
+          probe.idle = Duration.ofSeconds(2); // owner is back
+          clock.advance(Duration.ofMinutes(2));
+          observed.add(token.isCancelled());
+          return new ProcessRunner.Result(143, true, Duration.ofMinutes(4));
+        };
+    Daemon daemon = daemon(config);
+
+    daemon.tick(services(config));
+
+    assertThat(observed).containsExactly(false, true);
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.QUEUED);
   }
 
   @Test
@@ -550,7 +597,11 @@ class DaemonTest {
 
     @Override
     public void record(Instant ts, Duration userIdle, double load1) {
+      if (recordFailure != null) {
+        throw recordFailure;
+      }
       probe.samples++;
+      sampleTimes.add(ts);
     }
 
     @Override

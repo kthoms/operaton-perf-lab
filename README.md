@@ -38,6 +38,8 @@ their expected duration.
   `idle.coldStartWindow` (optional, `"HH:mm-HH:mm"`, may wrap midnight, default `"22:00-07:00"`),
   otherwise as 50% active (never idle). So a fresh install runs its first scheduled jobs at night
   instead of waiting about a week for history.
+- Activity samples are recorded every poll interval, and while a job runs at most once per poll
+  interval from the job's cancellation check, so the history has no gaps during long builds.
 
 ## Tests
 

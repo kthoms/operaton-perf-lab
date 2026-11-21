@@ -28,7 +28,7 @@ import java.util.function.Supplier;
 
 /**
  * The single-threaded daemon loop: connect (with backoff), then every poll interval record an
- * activity sample, check the data dir, schedule due jobs and run at most one job the idle gate
+ * activity sample (also while a job runs), check the data dir, schedule due jobs and run at most one job the idle gate
  * admits. A running job is cancelled as soon as the owner is active or a cancel was requested.
  */
 public class Daemon {
@@ -261,13 +261,18 @@ public class Daemon {
 
   /**
    * Cancelled once the owner is active or a cancel was requested; latches. Evaluated at most every
-   * half activity-check interval, because checkout operations poll the token far more often.
+   * half activity-check interval, because checkout operations poll the token far more often. Also
+   * records an activity sample from the probed idle time at most once per poll interval, so the
+   * history has no gap while a job runs (the tick recorded one just before the job started).
    */
   private CancellationToken cancelToken(Services s, long jobId) {
     Duration minGap = config.idle().activityCheckInterval().dividedBy(2);
+    Duration sampleEvery = config.idle().pollInterval();
+    Instant jobStart = clock.instant();
     return new CancellationToken() {
       private boolean cancelled;
       private Instant lastCheck;
+      private Instant lastSample = jobStart;
 
       @Override
       public boolean isCancelled() {
@@ -280,7 +285,9 @@ public class Daemon {
             return false;
           }
           lastCheck = now;
-          if (s.gate().userActive()) {
+          IdleGate.ActivityCheck check = s.gate().checkActivity();
+          recordDuringJob(now, check);
+          if (check.active()) {
             LOG.log(Level.INFO, "job {0}: user active, cancelling", jobId);
             cancelled = true;
           } else if (s.jobs().cancelRequested(jobId)) {
@@ -292,6 +299,19 @@ public class Daemon {
           LOG.log(Level.WARNING, "job " + jobId + ": cancellation check failed, continuing: " + e);
         }
         return cancelled;
+      }
+
+      /** Never throws: a failed sample must not influence cancellation. */
+      private void recordDuringJob(Instant now, IdleGate.ActivityCheck check) {
+        if (check.userIdle().isEmpty() || now.isBefore(lastSample.plus(sampleEvery))) {
+          return;
+        }
+        lastSample = now;
+        try {
+          s.history().record(now, check.userIdle().get(), s.probe().load1());
+        } catch (RuntimeException e) {
+          LOG.log(Level.WARNING, "job " + jobId + ": could not record activity sample: " + e);
+        }
       }
     };
   }

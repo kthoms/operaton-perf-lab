@@ -12,6 +12,9 @@ public class IdleGate {
 
   public record Decision(boolean ok, String reason) {}
 
+  /** Result of one watchdog check, with the probed idle time (empty if the probe failed). */
+  public record ActivityCheck(boolean active, Optional<Duration> userIdle) {}
+
   static final int FAILURES_BEFORE_ACTIVE = 3;
 
   private final AtomicInteger consecutiveFailures = new AtomicInteger();
@@ -70,13 +73,20 @@ public class IdleGate {
    * after {@value #FAILURES_BEFORE_ACTIVE} consecutive failures, so one glitch does not cancel a job.
    */
   public boolean userActive() {
+    return checkActivity().active();
+  }
+
+  /** Like {@link #userActive()}, but also returns the probed idle time for recording. */
+  public ActivityCheck checkActivity() {
     Optional<Duration> idle = probe.userIdle();
     if (idle.isEmpty()) {
       // intentionally keeps counting (stays >= 3) until any successful probe resets it
-      return consecutiveFailures.incrementAndGet() >= FAILURES_BEFORE_ACTIVE;
+      return new ActivityCheck(
+          consecutiveFailures.incrementAndGet() >= FAILURES_BEFORE_ACTIVE, idle);
     }
     consecutiveFailures.set(0);
-    return idle.get().compareTo(config.activityCheckInterval().multipliedBy(2)) < 0;
+    return new ActivityCheck(
+        idle.get().compareTo(config.activityCheckInterval().multipliedBy(2)) < 0, idle);
   }
 
   private static Decision no(String reason) {
