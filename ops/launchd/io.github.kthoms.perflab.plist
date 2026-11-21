@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: ops/install-launchd.sh fills the @...@ placeholders and installs it to ~/Library/LaunchAgents. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.kthoms.perflab</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>@JAVA@</string>
+    <string>-jar</string>
+    <string>@JAR@</string>
+    <string>daemon</string>
+    <string>--config</string>
+    <string>@CONFIG@</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- do not respawn in a tight loop when the daemon exits right away (e.g. second instance) -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>StandardOutPath</key>
+  <string>@LOGDIR@/perflab.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGDIR@/perflab.err.log</string>
+
+  <!-- launchd agents get a minimal environment: docker, git and the Maven wrapper need these -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>DOCKER_HOST</key>
+    <string>@DOCKER_HOST@</string>
+  </dict>
+</dict>
+</plist>

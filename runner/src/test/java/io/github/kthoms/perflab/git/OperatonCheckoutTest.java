@@ -106,6 +106,30 @@ class OperatonCheckoutTest {
     }
 
     @Test
+    void listsRemoteReleaseBranchesFromTheLocalClone() throws Exception {
+        Path work = tmp.resolve("work");
+        git(work, "push", "origin", "main:refs/heads/release/2.2.x");
+        git(work, "push", "origin", "main:refs/heads/release/2.1.x");
+        git(work, "push", "origin", "main:refs/heads/feature/x");
+        var c = checkout();
+        c.ensureCloned();
+        c.fetch();
+        // later upstream branches are invisible until the next fetch: no network involved
+        git(work, "push", "origin", "main:refs/heads/release/2.3.x");
+        assertThat(c.remoteReleaseBranches()).containsExactly("release/2.1.x", "release/2.2.x");
+        c.fetch();
+        assertThat(c.remoteReleaseBranches()).containsExactly("release/2.1.x", "release/2.2.x", "release/2.3.x");
+    }
+
+    @Test
+    void existsOnlyOnceCloned() throws Exception {
+        var c = checkout();
+        assertThat(c.exists()).isFalse();
+        c.ensureCloned();
+        assertThat(c.exists()).isTrue();
+    }
+
+    @Test
     void rejectsMalformedSha() throws Exception {
         var c = checkout();
         c.ensureCloned();

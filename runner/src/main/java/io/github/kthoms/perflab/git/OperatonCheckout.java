@@ -72,6 +72,22 @@ public class OperatonCheckout {
         run(dir, networkTimeout, token, "git", "fetch", "--prune", "origin");
     }
 
+    /** Whether the working copy has been cloned; touches nothing on disk. */
+    public boolean exists() {
+        return Files.isDirectory(dir.resolve(".git"));
+    }
+
+    /** {@code release/*} branches of the already-fetched local clone (no network), sorted. */
+    public List<String> remoteReleaseBranches() {
+        requireRepo(NEVER);
+        return capture(NEVER, "branch", "-r", "--list", "origin/release/*").lines()
+                .map(String::trim)
+                .filter(l -> l.startsWith("origin/") && !l.contains(" -> "))
+                .map(l -> l.substring("origin/".length()))
+                .sorted()
+                .toList();
+    }
+
     public String resolveBranch(String branch) {
         requireRepo(NEVER);
         return capture(NEVER, "rev-parse", "--verify", "origin/" + branch + "^{commit}").trim();

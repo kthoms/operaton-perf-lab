@@ -1,0 +1,73 @@
+package io.github.kthoms.perflab.cli;
+
+import io.github.kthoms.perflab.backup.Backup;
+import io.github.kthoms.perflab.config.PerfLabConfig;
+import io.github.kthoms.perflab.daemon.Daemon;
+import io.github.kthoms.perflab.db.Database;
+import io.github.kthoms.perflab.env.FingerprintCollector;
+import io.github.kthoms.perflab.exec.ProcessRunner;
+import io.github.kthoms.perflab.git.OperatonCheckout;
+import io.github.kthoms.perflab.idle.ActivityHistory;
+import io.github.kthoms.perflab.idle.IdleGate;
+import io.github.kthoms.perflab.idle.MacActivityProbe;
+import io.github.kthoms.perflab.jobs.BuildJobExecutor;
+import io.github.kthoms.perflab.jobs.CommitResolver;
+import io.github.kthoms.perflab.jobs.DurationEstimator;
+import io.github.kthoms.perflab.jobs.JobKind;
+import io.github.kthoms.perflab.jobs.JobRepository;
+import io.github.kthoms.perflab.jobs.Scheduler;
+import io.github.kthoms.perflab.results.ResultRepository;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import javax.sql.DataSource;
+
+/** Builds the real daemon from its collaborators. No executor for BENCHMARK jobs yet. */
+final class DaemonWiring {
+
+  private DaemonWiring() {}
+
+  static Daemon create(PerfLabConfig config, Path composeFile) {
+    var dataSource = new AtomicReference<DataSource>();
+    var runner = new ProcessRunner();
+    var checkout = new OperatonCheckout(config.checkout(), config.upstreamUrl(), runner);
+    var buildExecutor =
+        new BuildJobExecutor(
+            config,
+            checkout,
+            new CommitResolver(checkout, config.branches()),
+            runner,
+            new FingerprintCollector(),
+            Clock.systemUTC());
+    // idle hooks only run after connect() succeeded, so the data source is set by then
+    var backup = new Backup(config, composeFile, dataSource::get);
+
+    return new Daemon(
+        config,
+        () -> {
+          Database db =
+              Database.connect(
+                  config.resultsDb().jdbcUrl(),
+                  config.resultsDb().user(),
+                  config.resultsDb().password());
+          dataSource.set(db.dataSource());
+          var jobs = new JobRepository(db.dataSource());
+          var results = new ResultRepository(db.dataSource());
+          var probe = new MacActivityProbe(config.idle().heavyProcessNames());
+          var history = new ActivityHistory(db);
+          return new Daemon.Services(
+              jobs,
+              results,
+              probe,
+              history,
+              new IdleGate(probe, history, config.idle()),
+              new DurationEstimator(results),
+              new Scheduler(jobs, results, config),
+              Map.of(JobKind.BUILD, buildExecutor));
+        },
+        List.of(),
+        List.of(backup));
+  }
+}
