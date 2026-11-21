@@ -18,6 +18,14 @@ DOMAIN="gui/$(id -u)"
 
 JAVA_HOME_DIR="${JAVA_HOME:-$(/usr/libexec/java_home -v 25)}"
 JAVA="$JAVA_HOME_DIR/bin/java"
+# Same value as compose uses (infra/.env); the runner sets the grafana_ro password from it.
+ENV_FILE="$REPO/infra/.env"
+GRAFANA_RO_PASSWORD="grafana-ro"
+if [ -f "$ENV_FILE" ]; then
+  line="$(grep -E '^PERFLAB_GRAFANA_RO_PASSWORD=' "$ENV_FILE" | tail -n1 || true)"
+  [ -n "$line" ] && GRAFANA_RO_PASSWORD="${line#*=}"
+fi
+
 DOCKER_HOST_VALUE="${DOCKER_HOST:-unix://$HOME/.colima/default/docker.sock}"
 
 [ -x "$JAVA" ] || { echo "java not found at $JAVA" >&2; exit 1; }
@@ -36,6 +44,7 @@ sed -e "s|@JAVA@|$(esc "$JAVA")|g" \
     -e "s|@JAR@|$(esc "$JAR")|g" \
     -e "s|@CONFIG@|$(esc "$CONFIG")|g" \
     -e "s|@LOGDIR@|$(esc "$LOGDIR")|g" \
+    -e "s|@GRAFANA_RO_PASSWORD@|$(esc "$GRAFANA_RO_PASSWORD")|g" \
     -e "s|@DOCKER_HOST@|$(esc "$DOCKER_HOST_VALUE")|g" \
     "$TEMPLATE" > "$TARGET"
 plutil -lint "$TARGET"

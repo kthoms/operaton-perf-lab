@@ -61,6 +61,18 @@ class DatabaseIT {
     }
   }
 
+  @Test
+  void passwordChangeIsAppliedOnReconnect() throws SQLException {
+    Database.connect(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword(), "first-pw");
+    Database.connect(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword(), "second-pw");
+    try (var c = java.sql.DriverManager.getConnection(pg.getJdbcUrl(), "grafana_ro", "second-pw")) {
+      assertThat(c.isValid(2)).isTrue();
+    }
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> java.sql.DriverManager.getConnection(pg.getJdbcUrl(), "grafana_ro", "first-pw"))
+        .isInstanceOf(SQLException.class);
+  }
+
   private static List<String> tables(Database db) throws SQLException {
     var names = new ArrayList<String>();
     try (var c = db.dataSource().getConnection();

@@ -11,11 +11,21 @@ services:
     volumes:
       - ${PERFLAB_DATA_DIR}/pgdata:/var/lib/postgresql/data
 
+  # Docker creates the bind-mounted data dir root-owned; Grafana runs as uid 472
+  grafana-init:
+    image: busybox:1.36
+    command: chown -R 472:0 /var/lib/grafana
+    volumes:
+      - ${PERFLAB_DATA_DIR}/grafana:/var/lib/grafana
+
   grafana:
     image: grafana/grafana-oss:11.3.0
     restart: unless-stopped
     depends_on:
-      - results-db
+      results-db:
+        condition: service_started
+      grafana-init:
+        condition: service_completed_successfully
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}

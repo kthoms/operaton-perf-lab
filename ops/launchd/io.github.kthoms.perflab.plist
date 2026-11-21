@@ -36,6 +36,8 @@
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>DOCKER_HOST</key>
     <string>@DOCKER_HOST@</string>
+    <key>PERFLAB_GRAFANA_RO_PASSWORD</key>
+    <string>@GRAFANA_RO_PASSWORD@</string>
   </dict>
 </dict>
 </plist>
