@@ -26,6 +26,28 @@ it on every start from its own environment (if unset it leaves the password unch
 script (`ops/install-launchd.sh`) renders it from `infra/.env` into the plist (no entry if the key is absent). After changing it, re-run the
 install script and `docker compose ... up -d`.
 
+## First real start (on the NVMe)
+
+- Colima must mount the NVMe, otherwise `PERFLAB_DATA_DIR` on `/Volumes/...` is invisible to the
+  containers: `colima start --mount /Volumes/<nvme>:w` (or a `mounts:` entry with `writable: true`
+  in `colima.yaml`). After `docker compose ... up -d` check that `$PERFLAB_DATA_DIR/pgdata` appears
+  on the host (`ls $PERFLAB_DATA_DIR/pgdata`); if not, the database lives inside the VM only.
+- Start Colima with the Mac: `brew services start colima` (the daemon waits with backoff while the
+  results DB is down, but it never starts Colima itself).
+- To put the Colima VM disk on the NVMe, prefer moving `~/.colima` and leaving a symlink
+  (`colima stop; mv ~/.colima /Volumes/<nvme>/colima; ln -s /Volumes/<nvme>/colima ~/.colima`) over
+  `COLIMA_HOME`: every shell, brew service and launchd job then finds it without extra setup. If you
+  use `COLIMA_HOME` anyway, export it when running `ops/install-launchd.sh`: the script writes it
+  into the plist and derives the default `DOCKER_HOST` (`unix://$COLIMA_HOME/default/docker.sock`).
+- Benchmarks are compiled from `perfLabHome` (default: this checkout) only if it is a clean checkout
+  of the local `main` branch (untracked `target/` and `.superpowers/` aside); otherwise benchmark jobs
+  fail with a message naming the reason.
+- Verify the benchmark prep on the first benchmark run: engine install of the checkout into the lab's
+  Maven repo, then the benchmark compiled against that `-SNAPSHOT` version (see the job log in
+  `$dataDir/logs`).
+- `perflab status` run from a terminal reports "user active": you are typing in it. That is expected;
+  the daemon's own decision is in its log.
+
 ## When jobs start (idle gate)
 
 A job starts only while the owner has been idle for `idle.minUserIdle`, the 1-minute load is at most

@@ -313,11 +313,12 @@ assertThat(ReactorSummaryExtractor.extract(log)).contains(
 
 Blocked until the NVMe is attached.
 
-- [ ] **Step 1:** Format/mount the NVMe (owner). Set `dataDir` to it. Move the Colima disk: `colima stop && colima delete && colima start --cpu 6 --memory 8 --disk 100` with `COLIMA_HOME` (or a symlink) on the NVMe.
+- [ ] **Step 1:** Format/mount the NVMe (owner). Set `dataDir` to it. Move the Colima disk to the NVMe, preferably by moving `~/.colima` and leaving a symlink (`colima stop; mv ~/.colima /Volumes/<nvme>/colima; ln -s /Volumes/<nvme>/colima ~/.colima`) rather than `COLIMA_HOME` (if `COLIMA_HOME` is used, it must be exported when running `ops/install-launchd.sh`, which writes it into the plist and derives `DOCKER_HOST` from it). Recreate the VM so it mounts the NVMe writable: `colima delete && colima start --cpu 6 --memory 8 --disk 100 --mount /Volumes/<nvme>:w` (or `mounts:` in `colima.yaml`). Enable autostart: `brew services start colima`.
 - [ ] **Step 2:** Pick a JDK per branch (Temurin 21 for `release/2.2.x` and `main`, unless Operaton's CI uses something else). Write `~/.config/perflab/perflab.yml`.
 - [ ] **Step 3:** Run the build command for `main` once by hand. Confirm that no `webapps` frontend build and no `qa/*` app-server integration tests ran, and that Surefire reports exist for `engine`. Adjust `mavenArgs` if needed. **This fixes the baseline; later changes start a new segment.**
-- [ ] **Step 4:** `docker compose up -d`, `ops/install-launchd.sh`, `perflab status` shows an idle decision. Enqueue `main` manually and watch one full run land in Grafana.
-- [ ] **Step 5:** Test cancellation for real: touch the mouse during a run → `perflab status` shows the job queued again and no Java process left over.
+- [ ] **Step 4:** `docker compose up -d` and verify that `$PERFLAB_DATA_DIR/pgdata` appears on the host (`ls`); if it does not, Colima does not mount the NVMe and the data lives inside the VM. Make sure `perfLabHome` is a clean checkout of local `main` (benchmark jobs refuse otherwise). `ops/install-launchd.sh`; `perflab status` shows an idle decision (run from a terminal it says "user active": expected, you are typing). Enqueue `main` manually and watch one full run land in Grafana.
+- [ ] **Step 5:** Enqueue one benchmark job (h2) and verify the untimed prep path on this first run: the engine of the checkout is installed into the lab's Maven repo and the benchmark compiles against that `-SNAPSHOT` version (job log in `$dataDir/logs`).
+- [ ] **Step 6:** Test cancellation for real: touch the mouse during a run → `perflab status` shows the job queued again and no Java process left over.
 
 ### Task 14: Publish the repo and set up humanmaxxing (ask the owner first)
 

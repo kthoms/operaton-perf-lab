@@ -3,7 +3,9 @@
 # booted out first. Requires a built jar: mvn -DskipTests package
 #
 # Environment overrides: JAVA_HOME (default: java 25 from /usr/libexec/java_home),
-# PERFLAB_CONFIG (default: ~/.config/perflab/perflab.yml), DOCKER_HOST (default: Colima socket).
+# PERFLAB_CONFIG (default: ~/.config/perflab/perflab.yml), DOCKER_HOST (default: the Colima socket
+# under $COLIMA_HOME, else ~/.colima). A non-empty COLIMA_HOME is also put into the plist, so docker
+# and colima commands of the daemon find the moved Colima home (prefer a symlink of ~/.colima).
 set -euo pipefail
 
 LABEL="io.github.kthoms.perflab"
@@ -59,7 +61,12 @@ else
   echo "note: PERFLAB_GRAFANA_RO_PASSWORD not found (exported or in $ENV_FILE): not set in the plist, the runner leaves the grafana_ro password unchanged" >&2
 fi
 
-DOCKER_HOST_VALUE="${DOCKER_HOST:-unix://$HOME/.colima/default/docker.sock}"
+COLIMA_HOME_VALUE="${COLIMA_HOME:-}"
+case "$COLIMA_HOME_VALUE" in
+  ""|/*) ;;
+  *) echo "COLIMA_HOME must be an absolute path: $COLIMA_HOME_VALUE" >&2; exit 1 ;;
+esac
+DOCKER_HOST_VALUE="${DOCKER_HOST:-unix://${COLIMA_HOME_VALUE:-$HOME/.colima}/default/docker.sock}"
 
 [ -x "$JAVA" ] || { echo "java not found at $JAVA" >&2; exit 1; }
 [ -f "$JAR" ] || { echo "jar missing: $JAR (run: mvn -DskipTests package)" >&2; exit 1; }
@@ -91,6 +98,11 @@ sed -e "s|@JAVA@|$(esc "$JAVA")|g" \
     -e "s|@LOGDIR@|$(esc "$LOGDIR")|g" \
     -e "s|@DOCKER_HOST@|$(esc "$DOCKER_HOST_VALUE")|g" \
     "$TEMPLATE" > "$OUT"
+if [ -n "$COLIMA_HOME_VALUE" ]; then
+  sed -i.bak -e "s|@COLIMA_HOME@|$(esc "$COLIMA_HOME_VALUE")|g" "$OUT"
+else
+  sed -i.bak -e '/<key>COLIMA_HOME<\/key>/d' -e '/@COLIMA_HOME@/d' "$OUT"
+fi
 if [ -n "$HAVE_RO_PASSWORD" ]; then
   sed -i.bak -e "s|@GRAFANA_RO_PASSWORD@|$(esc "$GRAFANA_RO_PASSWORD")|g" "$OUT"
 else
