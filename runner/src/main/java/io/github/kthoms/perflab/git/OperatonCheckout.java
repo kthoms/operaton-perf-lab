@@ -84,6 +84,20 @@ public class OperatonCheckout {
         return !capture(NEVER, "branch", "-r", "--contains", sha).isBlank();
     }
 
+    /** The full SHA of a (possibly abbreviated) commit present in the clone. */
+    public String resolveCommit(String sha) {
+        requireSha(sha);
+        requireRepo(NEVER);
+        return capture(NEVER, "rev-parse", "--verify", sha + "^{commit}").trim();
+    }
+
+    /** True iff {@code origin/<branch>} exists and contains the commit. */
+    public boolean branchContains(String branch, String sha) {
+        requireSha(sha);
+        requireRepo(NEVER);
+        return exit(NEVER, "merge-base", "--is-ancestor", sha, "origin/" + branch) == 0;
+    }
+
     public void checkout(String sha) {
         checkout(sha, NEVER);
     }

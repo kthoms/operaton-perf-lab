@@ -12,9 +12,11 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import javax.sql.DataSource;
 
 /** Plain-JDBC persistence for runs and their measurements. */
@@ -111,6 +113,27 @@ public class ResultRepository {
       }
     } catch (SQLException e) {
       throw new ResultRepositoryException("recentDurations " + kind + " " + branch, e);
+    }
+  }
+
+  /** Start of the most recent run of one series, any status; empty if it never ran. */
+  public Optional<Instant> lastRunStart(JobKind kind, String branch, String benchmark, String db) {
+    String sql =
+        "select max(started_at) from run where kind=? and branch=?"
+            + " and benchmark is not distinct from ? and db is not distinct from ?";
+    try (Connection c = ds.getConnection();
+        PreparedStatement ps = c.prepareStatement(sql)) {
+      ps.setString(1, kind.name());
+      ps.setString(2, branch);
+      setNullable(ps, 3, benchmark);
+      setNullable(ps, 4, db);
+      try (ResultSet rs = ps.executeQuery()) {
+        rs.next();
+        Timestamp ts = rs.getTimestamp(1);
+        return ts == null ? Optional.empty() : Optional.of(ts.toInstant());
+      }
+    } catch (SQLException e) {
+      throw new ResultRepositoryException("lastRunStart " + kind + " " + branch, e);
     }
   }
 

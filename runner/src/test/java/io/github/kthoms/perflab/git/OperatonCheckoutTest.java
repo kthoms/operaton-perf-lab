@@ -78,6 +78,34 @@ class OperatonCheckoutTest {
     }
 
     @Test
+    void resolvesShortShaToFullSha() throws Exception {
+        var c = checkout();
+        c.ensureCloned();
+        c.fetch();
+        assertThat(c.resolveCommit(mainSha.substring(0, 10))).isEqualTo(mainSha);
+    }
+
+    @Test
+    void branchContainsChecksOriginBranch() throws Exception {
+        Path work = tmp.resolve("work");
+        git(work, "checkout", "-b", "maint", mainSha);
+        Files.writeString(work.resolve("c.txt"), "c");
+        git(work, "add", ".");
+        git(work, "commit", "-m", "maint");
+        String maintSha = git(work, "rev-parse", "HEAD");
+        git(work, "push", "origin", "maint");
+        var c = checkout();
+        c.ensureCloned();
+        c.fetch();
+        assertThat(c.branchContains("main", mainSha)).isTrue();
+        assertThat(c.branchContains("maint", mainSha)).isTrue();
+        assertThat(c.branchContains("main", maintSha)).isFalse();
+        assertThat(c.branchContains("maint", maintSha)).isTrue();
+        assertThat(c.branchContains("no-such-branch", mainSha)).isFalse();
+        assertThatThrownBy(() -> c.branchContains("main", "--all")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void rejectsMalformedSha() throws Exception {
         var c = checkout();
         c.ensureCloned();
