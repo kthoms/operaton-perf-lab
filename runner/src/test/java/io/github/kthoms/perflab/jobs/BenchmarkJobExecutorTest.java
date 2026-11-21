@@ -86,8 +86,21 @@ class BenchmarkJobExecutorTest {
               throw new IllegalStateException("no probes in tests");
             }),
         clock,
-        readinessTimeout);
+        readinessTimeout,
+        guard);
   }
+
+  /** perfLabHome is a plain temp dir in these tests; PerfLabHomeGuardTest covers the real check. */
+  RuntimeException guardFailure;
+  final PerfLabHomeGuard guard =
+      new PerfLabHomeGuard() {
+        @Override
+        public void verify(Path home) {
+          if (guardFailure != null) {
+            throw guardFailure;
+          }
+        }
+      };
 
   private static Job job(String db) {
     return job("task-authorization", db);
@@ -161,6 +174,31 @@ class BenchmarkJobExecutorTest {
             JobStatus.RUNNING, 1);
     Completed done = (Completed) executor.execute(commitJob, token);
     assertThat(done.run().source()).isEqualTo(RunRecord.SOURCE_COMMIT);
+  }
+
+  @Test
+  void dirtyPerfLabHomeStopsTheJobBeforeAnythingIsBuilt() {
+    guardFailure = new IllegalStateException("perfLabHome is not clean: M benchmarks/pom.xml");
+    assertThatThrownBy(() -> executor.execute(job("h2"), token))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not clean");
+    assertThat(runner.commands).isEmpty();
+    assertThat(checkout.checkedOut).isEmpty();
+  }
+
+  @Test
+  void realGuardRejectsAPerfLabHomeThatIsNoGitRepository() {
+    BenchmarkJobExecutor real =
+        new BenchmarkJobExecutor(
+            config, perfLabHome, checkout, new CommitResolver(checkout, config.branches()), runner,
+            new FingerprintCollector(cmd -> {
+              throw new IllegalStateException("no probes in tests");
+            }),
+            clock);
+    assertThatThrownBy(() -> real.execute(job("h2"), token))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not a git working tree");
+    assertThat(runner.commands).isEmpty();
   }
 
   @Test

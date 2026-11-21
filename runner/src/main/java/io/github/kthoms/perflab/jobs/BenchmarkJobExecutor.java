@@ -38,7 +38,9 @@ import java.util.stream.Stream;
  * dependencies for that version, and compile it offline. Only a compilation error means the
  * benchmark does not apply; any other prep failure is an infrastructure failure (thrown, so the
  * job is retried). The benchmark then runs {@code repetitions} times, for PostgreSQL in a fresh
- * container per job that is always removed afterwards.
+ * container per job that is always removed afterwards. The benchmark module is compiled from
+ * perfLabHome only if that working tree is a clean checkout of local {@code main}
+ * ({@link PerfLabHomeGuard}).
  */
 public class BenchmarkJobExecutor implements JobExecutor {
 
@@ -68,6 +70,7 @@ public class BenchmarkJobExecutor implements JobExecutor {
   private final FingerprintCollector fingerprints;
   private final Clock clock;
   private final Duration readinessTimeout;
+  private final PerfLabHomeGuard homeGuard;
 
   public BenchmarkJobExecutor(
       PerfLabConfig config,
@@ -77,7 +80,8 @@ public class BenchmarkJobExecutor implements JobExecutor {
       ProcessRunner runner,
       FingerprintCollector fingerprints,
       Clock clock) {
-    this(config, perfLabHome, checkout, resolver, runner, fingerprints, clock, READINESS_TIMEOUT);
+    this(config, perfLabHome, checkout, resolver, runner, fingerprints, clock, READINESS_TIMEOUT,
+        new PerfLabHomeGuard());
   }
 
   BenchmarkJobExecutor(
@@ -88,7 +92,8 @@ public class BenchmarkJobExecutor implements JobExecutor {
       ProcessRunner runner,
       FingerprintCollector fingerprints,
       Clock clock,
-      Duration readinessTimeout) {
+      Duration readinessTimeout,
+      PerfLabHomeGuard homeGuard) {
     this.config = config;
     this.perfLabHome = perfLabHome.toAbsolutePath();
     this.checkout = checkout;
@@ -97,6 +102,7 @@ public class BenchmarkJobExecutor implements JobExecutor {
     this.fingerprints = fingerprints;
     this.clock = clock;
     this.readinessTimeout = readinessTimeout;
+    this.homeGuard = homeGuard;
   }
 
   @Override
@@ -132,6 +138,8 @@ public class BenchmarkJobExecutor implements JobExecutor {
     if (!Files.isRegularFile(pom)) {
       throw new IllegalStateException("benchmark module not found: " + pom + " (check perfLabHome)");
     }
+    // the benchmark code is compiled and run: only from a clean checkout of local main
+    homeGuard.verify(perfLabHome);
 
     Instant started = clock.instant();
     checkout.ensureCloned(token);
