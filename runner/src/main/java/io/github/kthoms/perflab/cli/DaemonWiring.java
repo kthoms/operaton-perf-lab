@@ -1,5 +1,6 @@
 package io.github.kthoms.perflab.cli;
 
+import io.github.kthoms.perflab.analysis.RegressionDetector;
 import io.github.kthoms.perflab.backup.Backup;
 import io.github.kthoms.perflab.config.PerfLabConfig;
 import io.github.kthoms.perflab.daemon.Daemon;
@@ -32,6 +33,7 @@ final class DaemonWiring {
 
   static Daemon create(PerfLabConfig config, Path composeFile) {
     var dataSource = new AtomicReference<DataSource>();
+    var database = new AtomicReference<Database>();
     var runner = new ProcessRunner();
     var checkout = new OperatonCheckout(config.checkout(), config.upstreamUrl(), runner);
     var resolver = new CommitResolver(checkout, config.branches());
@@ -55,6 +57,7 @@ final class DaemonWiring {
                   config.resultsDb().user(),
                   config.resultsDb().password());
           dataSource.set(db.dataSource());
+          database.set(db);
           var jobs = new JobRepository(db.dataSource());
           var results = new ResultRepository(db.dataSource());
           var probe = new MacActivityProbe(config.idle().heavyProcessNames());
@@ -69,7 +72,8 @@ final class DaemonWiring {
               new Scheduler(jobs, results, config),
               Map.of(JobKind.BUILD, buildExecutor, JobKind.BENCHMARK, benchmarkExecutor));
         },
-        List.of(),
+        // after-run hooks only run after connect() succeeded, so the database is set by then
+        List.of(runId -> new RegressionDetector(database.get()).analyze(runId)),
         List.of(backup));
   }
 }
