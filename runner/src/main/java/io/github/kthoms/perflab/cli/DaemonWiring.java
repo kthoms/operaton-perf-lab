@@ -10,6 +10,7 @@ import io.github.kthoms.perflab.git.OperatonCheckout;
 import io.github.kthoms.perflab.idle.ActivityHistory;
 import io.github.kthoms.perflab.idle.IdleGate;
 import io.github.kthoms.perflab.idle.MacActivityProbe;
+import io.github.kthoms.perflab.jobs.BenchmarkJobExecutor;
 import io.github.kthoms.perflab.jobs.BuildJobExecutor;
 import io.github.kthoms.perflab.jobs.CommitResolver;
 import io.github.kthoms.perflab.jobs.DurationEstimator;
@@ -24,7 +25,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 
-/** Builds the real daemon from its collaborators. No executor for BENCHMARK jobs yet. */
+/** Builds the real daemon from its collaborators. */
 final class DaemonWiring {
 
   private DaemonWiring() {}
@@ -33,14 +34,15 @@ final class DaemonWiring {
     var dataSource = new AtomicReference<DataSource>();
     var runner = new ProcessRunner();
     var checkout = new OperatonCheckout(config.checkout(), config.upstreamUrl(), runner);
+    var resolver = new CommitResolver(checkout, config.branches());
+    var fingerprints = new FingerprintCollector();
     var buildExecutor =
-        new BuildJobExecutor(
-            config,
-            checkout,
-            new CommitResolver(checkout, config.branches()),
-            runner,
-            new FingerprintCollector(),
-            Clock.systemUTC());
+        new BuildJobExecutor(config, checkout, resolver, runner, fingerprints, Clock.systemUTC());
+    Path perfLabHome =
+        config.perfLabHome() != null ? config.perfLabHome() : PerfLabCli.defaultPerfLabHome();
+    var benchmarkExecutor =
+        new BenchmarkJobExecutor(
+            config, perfLabHome, checkout, resolver, runner, fingerprints, Clock.systemUTC());
     // idle hooks only run after connect() succeeded, so the data source is set by then
     var backup = new Backup(config, composeFile, dataSource::get);
 
@@ -65,7 +67,7 @@ final class DaemonWiring {
               new IdleGate(probe, history, config.idle()),
               new DurationEstimator(results),
               new Scheduler(jobs, results, config),
-              Map.of(JobKind.BUILD, buildExecutor));
+              Map.of(JobKind.BUILD, buildExecutor, JobKind.BENCHMARK, benchmarkExecutor));
         },
         List.of(),
         List.of(backup));

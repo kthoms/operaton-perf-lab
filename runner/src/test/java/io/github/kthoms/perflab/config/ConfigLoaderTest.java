@@ -43,6 +43,14 @@ class ConfigLoaderTest {
     }
 
     @Test
+    void perfLabHomeIsOptional(@TempDir Path t) throws IOException {
+        assertThat(ConfigLoader.load(Path.of("../config/perflab.example.yml")).perfLabHome()).isNull();
+        String yml = Files.readString(Path.of("../config/perflab.example.yml")) + "perfLabHome: /opt/perf-lab\n";
+        Path f = Files.writeString(t.resolve("c.yml"), yml);
+        assertThat(ConfigLoader.load(f).perfLabHome()).isEqualTo(Path.of("/opt/perf-lab"));
+    }
+
+    @Test
     void parsesShortDurations() {
         assertThat(ConfigLoader.parseDuration("90m")).isEqualTo(Duration.ofMinutes(90));
         assertThat(ConfigLoader.parseDuration("20h")).isEqualTo(Duration.ofHours(20));

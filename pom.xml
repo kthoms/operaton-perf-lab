@@ -10,6 +10,7 @@
 
   <modules>
     <module>runner</module>
+    <module>benchmarks</module>
   </modules>
 
   <properties>

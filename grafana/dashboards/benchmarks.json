@@ -1,0 +1,320 @@
+{
+  "uid": "benchmarks",
+  "title": "Operaton engine benchmarks",
+  "tags": [
+    "perflab"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "benchmark",
+        "label": "Benchmark",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "query": "select distinct benchmark from run where kind='BENCHMARK' order by 1",
+        "definition": "select distinct benchmark from run where kind='BENCHMARK' order by 1",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "branch",
+        "label": "Branch",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "query": "select distinct branch from run where kind='BENCHMARK' order by 1",
+        "definition": "select distinct branch from run where kind='BENCHMARK' order by 1",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "db",
+        "label": "Database",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "query": "select distinct db from run where kind='BENCHMARK' order by 1",
+        "definition": "select distinct db from run where kind='BENCHMARK' order by 1",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "segment",
+        "label": "Segment",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "query": "select distinct segment from run where kind='BENCHMARK' order by 1",
+        "definition": "select distinct segment from run where kind='BENCHMARK' order by 1",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": {},
+        "options": []
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Regressions",
+        "enable": true,
+        "iconColor": "red",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "target": {
+          "refId": "Anno",
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, g.kpi || ' ' || r.branch || ' / ' || r.db || ': ' || round(g.value::numeric,2) || ' vs ' || round(g.baseline_median::numeric,2) || ' | ' || coalesce(g.compare_url,'') as text, 'regression' as tags\nfrom regression g join run r on r.id=g.run_id\nwhere r.kind='BENCHMARK' and r.benchmark=${benchmark:sqlstring} and $__timeFilter(r.started_at) and r.branch in (${branch:sqlstring}) and r.db in (${db:sqlstring}) and r.segment in (${segment:sqlstring})"
+        }
+      },
+      {
+        "name": "Segment changes",
+        "enable": true,
+        "iconColor": "orange",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "target": {
+          "refId": "Anno",
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select started_at as time, 'segment ' || prev || ' -> ' || segment as text, 'segment' as tags\nfrom (select started_at, branch, segment, lag(segment) over (partition by branch order by started_at) as prev\n      from run where kind='BENCHMARK') s\nwhere prev is not null and prev <> segment and $__timeFilter(started_at) and branch in (${branch:sqlstring})"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Median per database and branch ($benchmark)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "spanNulls": true,
+            "lineWidth": 1,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "last"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, r.branch || ' / ' || r.db || ' (' || r.segment || ')' as metric,\n  percentile_cont(0.5) within group (order by m.value) as value\nfrom measurement m join run r on r.id=m.run_id\nwhere m.kpi='benchmark.median.duration' and r.kind='BENCHMARK' and r.status='SUCCESS' and r.benchmark=${benchmark:sqlstring} and r.branch in (${branch:sqlstring}) and r.db in (${db:sqlstring}) and r.segment in (${segment:sqlstring}) and $__timeFilter(r.started_at)\ngroup by r.id, r.started_at, r.branch, r.db, r.segment\norder by 1"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Iteration spread: min / p50 / p95 / max",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "spanNulls": true,
+            "lineWidth": 1,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, r.branch || ' / ' || r.db || ' (' || r.segment || ')' || ' ' || s.stat as metric, s.v as value\nfrom run r\njoin lateral (\n  select min(m.value) as mn, percentile_cont(0.5) within group (order by m.value) as p50,\n         percentile_cont(0.95) within group (order by m.value) as p95, max(m.value) as mx\n  from measurement m where m.run_id=r.id and m.kpi='benchmark.iteration.duration') a on true\ncross join lateral (values ('min', a.mn), ('p50', a.p50), ('p95', a.p95), ('max', a.mx)) as s(stat, v)\nwhere r.kind='BENCHMARK' and r.status='SUCCESS' and r.benchmark=${benchmark:sqlstring} and r.branch in (${branch:sqlstring}) and r.db in (${db:sqlstring}) and r.segment in (${segment:sqlstring}) and $__timeFilter(r.started_at) and a.mn is not null\norder by 1"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Repetition medians (one point per repetition)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 12,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "spanNulls": true,
+            "lineWidth": 1,
+            "showPoints": "always",
+            "drawStyle": "points",
+            "pointSize": 6
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "min",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "select r.started_at + ((m.dims->>'repetition')::int * interval '1 minute') as time, r.branch || ' / ' || r.db || ' (' || r.segment || ')' as metric, m.value\nfrom measurement m join run r on r.id=m.run_id\nwhere m.kpi='benchmark.median.duration' and r.kind='BENCHMARK' and r.status='SUCCESS' and r.benchmark=${benchmark:sqlstring} and r.branch in (${branch:sqlstring}) and r.db in (${db:sqlstring}) and r.segment in (${segment:sqlstring}) and $__timeFilter(r.started_at)\norder by 1"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Latest run per branch and database",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select distinct on (r.branch, r.db) r.branch, r.db as \"database\", r.started_at as \"run\", left(r.commit_sha, 10) as \"commit\", r.segment,\n  (select percentile_cont(0.5) within group (order by value) from measurement where run_id=r.id and kpi='benchmark.median.duration') as \"median ms\",\n  (select min(value) from measurement where run_id=r.id and kpi='benchmark.iteration.duration') as \"min ms\",\n  (select max(value) from measurement where run_id=r.id and kpi='benchmark.iteration.duration') as \"max ms\",\n  (select count(*) from measurement where run_id=r.id and kpi='benchmark.median.duration') as repetitions\nfrom run r\nwhere r.kind='BENCHMARK' and r.status='SUCCESS' and r.benchmark=${benchmark:sqlstring} and r.branch in (${branch:sqlstring}) and r.db in (${db:sqlstring}) and r.segment in (${segment:sqlstring}) and $__timeFilter(r.started_at)\norder by r.branch, r.db, r.started_at desc"
+        }
+      ]
+    }
+  ]
+}

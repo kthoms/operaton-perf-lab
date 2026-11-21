@@ -3,6 +3,7 @@ dataDir: /Volumes/PerfLab/perflab            # placeholder name of the NVMe volu
 backupDir: /Volumes/Backup/perflab-backups
 backupRetentionDays: 14
 upstreamUrl: https://github.com/operaton/operaton.git
+# perfLabHome: /path/to/operaton-perf-lab   # optional; default: derived from runner/target/perflab.jar
 resultsDb:
   jdbcUrl: jdbc:postgresql://127.0.0.1:5433/perflab
   user: perflab

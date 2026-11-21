@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>io.github.kthoms.perflab</groupId>
+    <artifactId>operaton-perf-lab-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>benchmarks</artifactId>
+  <description>
+    Engine benchmarks, compiled and run by the runner against the Operaton version under test:
+    mvn -f benchmarks/pom.xml -Doperaton.version=X compile, then ... exec:exec
+  </description>
+
+  <properties>
+    <!-- default for this module's own tests; the runner overrides it with the checkout's version -->
+    <operaton.version>2.2.2</operaton.version>
+    <h2.version>2.5.252</h2.version>
+    <!-- Operaton 2.x branches build with JDK 17+, and the benchmark runs on the branch JDK -->
+    <maven.compiler.release>17</maven.compiler.release>
+    <!-- the runner builds outside the perf-lab repo, in its data dir -->
+    <benchmark.buildDir>${project.basedir}/target</benchmark.buildDir>
+
+    <!-- exec:exec knobs, overridable with -D -->
+    <benchmark.output>${benchmark.buildDir}/benchmark.json</benchmark.output>
+    <benchmark.database>h2</benchmark.database>
+    <benchmark.jdbcUrl>jdbc:h2:mem:perflab-bench;DB_CLOSE_DELAY=-1</benchmark.jdbcUrl>
+    <benchmark.jdbcUser>sa</benchmark.jdbcUser>
+    <benchmark.jdbcPassword></benchmark.jdbcPassword>
+    <benchmark.tasks>5000</benchmark.tasks>
+    <benchmark.groups>10</benchmark.groups>
+    <benchmark.warmup>30</benchmark.warmup>
+    <benchmark.iterations>200</benchmark.iterations>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.operaton.bpm</groupId>
+      <artifactId>operaton-engine</artifactId>
+      <version>${operaton.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <version>${h2.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+    </dependency>
+    <!-- the engine's FEEL (DMN) engine needs Jackson at runtime but does not bring it -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <!-- engine logging at WARN (src/main/resources/simplelogger.properties) -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>2.0.17</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <directory>${benchmark.buildDir}</directory>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.6.3</version>
+        <configuration>
+          <!-- forked JVM of the Maven JDK (the branch JAVA_HOME), so Maven itself is not measured -->
+          <executable>${java.home}/bin/java</executable>
+          <arguments>
+            <argument>-Dbenchmark.output=${benchmark.output}</argument>
+            <argument>-Dbenchmark.database=${benchmark.database}</argument>
+            <argument>-Dbenchmark.jdbcUrl=${benchmark.jdbcUrl}</argument>
+            <argument>-Dbenchmark.jdbcUser=${benchmark.jdbcUser}</argument>
+            <argument>-Dbenchmark.jdbcPassword=${benchmark.jdbcPassword}</argument>
+            <argument>-Dbenchmark.tasks=${benchmark.tasks}</argument>
+            <argument>-Dbenchmark.groups=${benchmark.groups}</argument>
+            <argument>-Dbenchmark.warmup=${benchmark.warmup}</argument>
+            <argument>-Dbenchmark.iterations=${benchmark.iterations}</argument>
+            <argument>-classpath</argument>
+            <classpath/>
+            <argument>io.github.kthoms.perflab.bench.TaskAuthorizationBenchmark</argument>
+          </arguments>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

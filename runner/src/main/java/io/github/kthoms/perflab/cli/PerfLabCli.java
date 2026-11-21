@@ -80,19 +80,24 @@ public class PerfLabCli implements Runnable {
 
   /** {@code <repo>/infra/docker-compose.yml}, found relative to {@code <repo>/runner/target/perflab.jar}. */
   static Path defaultComposeFile() {
+    return defaultPerfLabHome().resolve("infra").resolve("docker-compose.yml");
+  }
+
+  /** The perf-lab repository: {@code <repo>} of {@code <repo>/runner/target/perflab.jar}, else the working directory. */
+  static Path defaultPerfLabHome() {
     try {
       Path location =
           Path.of(PerfLabCli.class.getProtectionDomain().getCodeSource().getLocation().toURI());
       if (Files.isRegularFile(location)) {
         Path repo = location.toAbsolutePath().getParent().getParent().getParent();
         if (repo != null) {
-          return repo.resolve("infra").resolve("docker-compose.yml");
+          return repo;
         }
       }
     } catch (Exception ignored) {
       // fall through to the working directory
     }
-    return Path.of("infra", "docker-compose.yml").toAbsolutePath();
+    return Path.of("").toAbsolutePath();
   }
 
   abstract static class Base implements Callable<Integer> {

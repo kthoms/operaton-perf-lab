@@ -12,7 +12,21 @@ public record PerfLabConfig(
         Db resultsDb,
         List<BranchConfig> branches,
         List<BenchmarkConfig> benchmarks,
-        IdleConfig idle) {
+        IdleConfig idle,
+        Path perfLabHome) {
+
+    /** Without {@code perfLabHome}: the daemon derives it from the location of perflab.jar. */
+    public PerfLabConfig(
+            Path dataDir,
+            Path backupDir,
+            int backupRetentionDays,
+            String upstreamUrl,
+            Db resultsDb,
+            List<BranchConfig> branches,
+            List<BenchmarkConfig> benchmarks,
+            IdleConfig idle) {
+        this(dataDir, backupDir, backupRetentionDays, upstreamUrl, resultsDb, branches, benchmarks, idle, null);
+    }
 
     public record Db(String jdbcUrl, String user, String password) {}
 
