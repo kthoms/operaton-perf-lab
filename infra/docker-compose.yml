@@ -1,0 +1,30 @@
+services:
+  results-db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PERFLAB_DB_USER}
+      POSTGRES_PASSWORD: ${PERFLAB_DB_PASSWORD}
+      POSTGRES_DB: ${PERFLAB_DB_NAME}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ${PERFLAB_DATA_DIR}/pgdata:/var/lib/postgresql/data
+
+  grafana:
+    image: grafana/grafana-oss:11.3.0
+    restart: unless-stopped
+    depends_on:
+      - results-db
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      PERFLAB_DB_USER: ${PERFLAB_DB_USER}
+      PERFLAB_DB_PASSWORD: ${PERFLAB_DB_PASSWORD}
+      PERFLAB_DB_NAME: ${PERFLAB_DB_NAME}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${PERFLAB_DATA_DIR}/grafana:/var/lib/grafana
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro

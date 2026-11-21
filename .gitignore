@@ -2,3 +2,6 @@
 target/
 infra/.env
 .DS_Store
+runner/target/
+*.iml
+.idea/
