@@ -1,0 +1,13 @@
+[INFO] Scanning for projects...
+12:34:50,123 [INFO] Reactor Summary for Operaton 1.0:
+[INFO]
+[INFO] Operaton - Engine .................................. SUCCESS [01:02 min]
+12:34:56,789 [INFO] Operaton - Spin Plugin ........................ SUCCESS [  1.234 s]
+[INFO] Operaton - Webapps ................................. SKIPPED
+[INFO] Operaton - Broken .................................. FAILURE [ 3.000 s]
+this line is garbage .... SUCCESS [x]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  1:02:03 h
+[INFO] Finished at: 2026-11-21T12:00:00+01:00

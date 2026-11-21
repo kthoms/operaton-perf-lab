@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="org.s.SpinTest" time="1,234.5" tests="7" errors="0" skipped="0" failures="0">
+  <testcase name="t" classname="org.s.SpinTest" time="0.1"/>
+</testsuite>

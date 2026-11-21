@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="org.x.ATest" time="2.0" tests="4" errors="0" skipped="0" failures="0">
+  <testcase name="t" classname="org.x.ATest" time="0.1"/>
+</testsuite>
