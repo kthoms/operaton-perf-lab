@@ -36,6 +36,7 @@ public class ProcessRunner {
         var pb = new ProcessBuilder(full)
                 .directory(workDir.toFile())
                 .redirectErrorStream(true)
+                .redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")))
                 .redirectOutput(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
         pb.environment().putAll(env);
         Process process = pb.start();
@@ -56,20 +57,38 @@ public class ProcessRunner {
         return new Result(exit, cancelled, Duration.between(start, Instant.now()));
     }
 
-    private static void killTree(Process root) throws InterruptedException {
-        List<ProcessHandle> victims = new ArrayList<>(root.toHandle().descendants().toList());
-        victims.add(root.toHandle());
-        // descendants first, root last
-        for (int i = 0; i < victims.size() - 1; i++) victims.get(i).destroy();
-        root.destroy();
-        long deadline = System.nanoTime() + GRACE.toNanos();
-        while (System.nanoTime() < deadline && victims.stream().anyMatch(ProcessHandle::isAlive)) {
-            Thread.sleep(50);
+    private static void collect(ProcessHandle root, java.util.Set<ProcessHandle> known) {
+        known.add(root);
+        root.descendants().forEach(known::add);
+        for (ProcessHandle h : List.copyOf(known)) {
+            if (h.isAlive()) h.descendants().forEach(known::add);
         }
-        // catch any late-forked children of survivors
-        victims.stream().filter(ProcessHandle::isAlive).forEach(h -> {
-            h.descendants().forEach(ProcessHandle::destroyForcibly);
-            h.destroyForcibly();
-        });
+    }
+
+    private static boolean anyAlive(java.util.Set<ProcessHandle> known) {
+        return known.stream().anyMatch(ProcessHandle::isAlive);
+    }
+
+    private static void waitDead(java.util.Set<ProcessHandle> known, long maxNanos) throws InterruptedException {
+        long end = System.nanoTime() + maxNanos;
+        while (System.nanoTime() < end && anyAlive(known)) Thread.sleep(50);
+    }
+
+    /** Repeated snapshot+destroy rounds so late-spawned descendants are caught; then force-kill leftovers. */
+    private static void killTree(Process process) throws InterruptedException {
+        ProcessHandle root = process.toHandle();
+        java.util.Set<ProcessHandle> known = new java.util.LinkedHashSet<>();
+        long deadline = System.nanoTime() + GRACE.toNanos();
+        for (int round = 0; round < 5 && System.nanoTime() < deadline; round++) {
+            collect(root, known);
+            if (!anyAlive(known)) break;
+            // descendants first, root last
+            known.stream().filter(h -> !h.equals(root)).filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroy);
+            if (root.isAlive()) root.destroy();
+            waitDead(known, Duration.ofSeconds(1).toNanos());
+        }
+        collect(root, known);
+        known.stream().filter(ProcessHandle::isAlive).forEach(ProcessHandle::destroyForcibly);
+        waitDead(known, Duration.ofSeconds(5).toNanos());
     }
 }

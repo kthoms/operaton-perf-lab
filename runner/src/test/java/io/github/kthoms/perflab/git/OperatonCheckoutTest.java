@@ -97,4 +97,64 @@ class OperatonCheckoutTest {
         assertThat(git(dir, "status", "--porcelain")).isEmpty();
         assertThat(git(dir, "rev-parse", "HEAD")).isEqualTo(mainSha);
     }
+
+    @Test
+    void reportsUnreachableEvenWhenCommitExistsLocally() throws Exception {
+        var c = checkout();
+        c.ensureCloned();
+        c.fetch();
+        Path dir = tmp.resolve("clone/operaton");
+        git(dir, "fetch", "origin", "refs/pull/1/head");
+        assertThat(git(dir, "cat-file", "-t", prSha)).isEqualTo("commit");
+        assertThat(c.isReachableFromUpstream(prSha)).isFalse();
+    }
+
+    @Test
+    void checkoutSwitchesCommitFromDirtyTree() throws Exception {
+        var c = checkout();
+        c.ensureCloned();
+        c.fetch();
+        Path work = tmp.resolve("work");
+        git(work, "checkout", "main");
+        Files.writeString(work.resolve("a.txt"), "second");
+        git(work, "commit", "-am", "two");
+        git(work, "push", "origin", "main");
+        String second = git(work, "rev-parse", "HEAD");
+        c.fetch();
+        c.checkout(mainSha);
+        Path dir = tmp.resolve("clone/operaton");
+        Files.writeString(dir.resolve("a.txt"), "dirty");
+        Files.writeString(dir.resolve("junk.txt"), "x");
+        c.checkout(second);
+        assertThat(git(dir, "rev-parse", "HEAD")).isEqualTo(second);
+        assertThat(git(dir, "status", "--porcelain")).isEmpty();
+        assertThat(Files.readString(dir.resolve("a.txt"))).isEqualTo("second");
+    }
+
+    @Test
+    void failedCloneThrows() {
+        var c = new OperatonCheckout(tmp.resolve("x/operaton"), tmp.resolve("missing.git").toString(), new ProcessRunner());
+        assertThatThrownBy(c::ensureCloned).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void refusesDirectoryInsideEnclosingRepo() throws Exception {
+        Path outer = tmp.resolve("outer");
+        Files.createDirectories(outer.resolve("operaton"));
+        git(outer, "init", "-b", "main");
+        var c = new OperatonCheckout(outer.resolve("operaton"), bare.toString(), new ProcessRunner());
+        assertThatThrownBy(c::fetch).isInstanceOf(IllegalStateException.class).hasMessageContaining("not the root");
+        assertThatThrownBy(() -> c.checkout(mainSha)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void repinsOriginToUpstream() throws Exception {
+        var c = checkout();
+        c.ensureCloned();
+        Path dir = tmp.resolve("clone/operaton");
+        git(dir, "remote", "set-url", "origin", tmp.resolve("fork.git").toString());
+        c.fetch();
+        assertThat(git(dir, "remote", "get-url", "origin")).isEqualTo(bare.toString());
+        assertThat(c.resolveBranch("main")).isEqualTo(mainSha);
+    }
 }

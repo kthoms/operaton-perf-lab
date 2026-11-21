@@ -64,4 +64,24 @@ class ProcessRunnerTest {
         assertThat(ProcessHandle.current().descendants().filter(ProcessHandle::isAlive).count())
                 .isLessThanOrEqualTo(before);
     }
+
+    @Test
+    void cancelForceKillsChildIgnoringTerm() throws Exception {
+        var cancel = new AtomicBoolean();
+        var t = new Thread(() -> {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException ignored) {
+            }
+            cancel.set(true);
+        });
+        t.start();
+        var r = runner.run(List.of("sh", "-c", "trap '' TERM; sleep 300 & echo $! >> pids; echo $$ >> pids; while true; do sleep 1; done"),
+                tmp, Map.of(), tmp.resolve("l.log"), cancel::get, Duration.ofMillis(100));
+        assertThat(r.cancelled()).isTrue();
+        var pids = Files.readAllLines(tmp.resolve("pids")).stream().map(String::trim).filter(s -> !s.isEmpty())
+                .map(Long::parseLong).toList();
+        assertThat(pids).hasSize(2);
+        assertThat(pids).noneMatch(p -> ProcessHandle.of(p).map(ProcessHandle::isAlive).orElse(false));
+    }
 }

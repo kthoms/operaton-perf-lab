@@ -1,7 +1,10 @@
 package io.github.kthoms.perflab.git;
 
+import io.github.kthoms.perflab.exec.CancellationToken;
 import io.github.kthoms.perflab.exec.ProcessRunner;
+import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -15,87 +18,173 @@ public class OperatonCheckout {
 
     private static final Pattern SHA = Pattern.compile("^[0-9a-f]{7,40}$");
     private static final Duration POLL = Duration.ofMillis(200);
+    private static final Duration NETWORK_TIMEOUT = Duration.ofMinutes(30);
+    private static final Duration LOCAL_TIMEOUT = Duration.ofMinutes(2);
+    private static final Map<String, String> GIT_ENV = Map.of("GIT_TERMINAL_PROMPT", "0");
+    private static final CancellationToken NEVER = () -> false;
 
     private final Path dir;
     private final String upstreamUrl;
     private final ProcessRunner runner;
     private final Path gitLog;
+    private final Duration networkTimeout;
+    private final Duration localTimeout;
 
     public OperatonCheckout(Path dir, String upstreamUrl, ProcessRunner runner) {
+        this(dir, upstreamUrl, runner, NETWORK_TIMEOUT, LOCAL_TIMEOUT);
+    }
+
+    OperatonCheckout(Path dir, String upstreamUrl, ProcessRunner runner, Duration networkTimeout, Duration localTimeout) {
         this.dir = dir.toAbsolutePath();
         this.upstreamUrl = upstreamUrl;
         this.runner = runner;
+        this.networkTimeout = networkTimeout;
+        this.localTimeout = localTimeout;
         Path parent = this.dir.getParent();
         this.gitLog = (parent != null ? parent : this.dir).resolve("git.log");
     }
 
     public void ensureCloned() {
-        if (Files.isDirectory(dir.resolve(".git"))) return;
-        try {
-            Files.createDirectories(dir.getParent());
-        } catch (IOException e) {
-            throw new IllegalStateException(e);
+        ensureCloned(NEVER);
+    }
+
+    public void ensureCloned(CancellationToken token) {
+        if (!Files.isDirectory(dir.resolve(".git"))) {
+            try {
+                Files.createDirectories(dir.getParent());
+            } catch (IOException e) {
+                throw new IllegalStateException(e);
+            }
+            int code = run(dir.getParent(), networkTimeout, token, "git", "clone", upstreamUrl, dir.toString());
+            if (code != 0) throw new IllegalStateException("git clone failed with " + code + " (see " + gitLog + ")");
         }
-        run(dir.getParent(), "git", "clone", upstreamUrl, dir.toString());
+        requireRepo(token);
+        pinOrigin(token);
     }
 
     public void fetch() {
-        git("fetch", "--prune", "origin");
+        fetch(NEVER);
+    }
+
+    public void fetch(CancellationToken token) {
+        requireRepo(token);
+        pinOrigin(token);
+        run(dir, networkTimeout, token, "git", "fetch", "--prune", "origin");
     }
 
     public String resolveBranch(String branch) {
-        return capture("rev-parse", "--verify", "origin/" + branch + "^{commit}").trim();
+        requireRepo(NEVER);
+        return capture(NEVER, "rev-parse", "--verify", "origin/" + branch + "^{commit}").trim();
     }
 
     public boolean isReachableFromUpstream(String sha) {
-        if (sha == null || !SHA.matcher(sha).matches()) {
-            throw new IllegalArgumentException("not a commit sha: " + sha);
-        }
-        if (exit("cat-file", "-e", sha + "^{commit}") != 0) return false;
-        return !capture("branch", "-r", "--contains", sha).isBlank();
+        requireSha(sha);
+        requireRepo(NEVER);
+        if (exit(NEVER, "cat-file", "-e", sha + "^{commit}") != 0) return false;
+        return !capture(NEVER, "branch", "-r", "--contains", sha).isBlank();
     }
 
     public void checkout(String sha) {
-        if (!SHA.matcher(sha).matches()) throw new IllegalArgumentException("not a commit sha: " + sha);
-        git("checkout", "--detach", sha);
-        git("clean", "-ffdx");
-        git("reset", "--hard", sha);
+        checkout(sha, NEVER);
     }
 
-    private void git(String... args) {
-        int code = exit(args);
+    public void checkout(String sha, CancellationToken token) {
+        requireSha(sha);
+        requireRepo(token);
+        // a dirty tree from an aborted build must never block switching commits
+        git(token, "reset", "--hard");
+        git(token, "clean", "-ffdx");
+        git(token, "checkout", "-f", "--detach", sha);
+        git(token, "clean", "-ffdx");
+    }
+
+    private static void requireSha(String sha) {
+        if (sha == null || !SHA.matcher(sha).matches()) {
+            throw new IllegalArgumentException("not a commit sha: " + sha);
+        }
+    }
+
+    /** The git toplevel of dir must be dir itself, never an enclosing repository. */
+    private void requireRepo(CancellationToken token) {
+        try {
+            String top = capture(token, "rev-parse", "--show-toplevel").trim();
+            if (!Path.of(top).toRealPath().equals(dir.toRealPath())) {
+                throw new IllegalStateException(dir + " is not the root of its own git repository (found " + top + ")");
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private void pinOrigin(CancellationToken token) {
+        if (exit(token, "remote", "get-url", "origin") != 0) {
+            git(token, "remote", "add", "origin", upstreamUrl);
+        } else if (!capture(token, "remote", "get-url", "origin").trim().equals(upstreamUrl)) {
+            git(token, "remote", "set-url", "origin", upstreamUrl);
+        }
+    }
+
+    private void git(CancellationToken token, String... args) {
+        int code = exit(token, args);
         if (code != 0) throw new IllegalStateException("git " + String.join(" ", args) + " failed with " + code + " (see " + gitLog + ")");
     }
 
-    private int exit(String... args) {
+    private int exit(CancellationToken token, String... args) {
         var cmd = new ArrayList<String>();
         cmd.add("git");
         cmd.addAll(List.of(args));
-        return run(dir, cmd.toArray(String[]::new));
+        boolean network = args[0].equals("fetch") || args[0].equals("clone");
+        return run(dir, network ? networkTimeout : localTimeout, token, cmd.toArray(String[]::new));
     }
 
-    private String capture(String... args) {
+    private String capture(CancellationToken token, String... args) {
         var cmd = new ArrayList<String>();
         cmd.add("git");
         cmd.addAll(List.of(args));
-        var pb = new ProcessBuilder(cmd).directory(dir.toFile()).redirectError(ProcessBuilder.Redirect.appendTo(gitLog.toFile()));
+        Path out = null;
         try {
             Files.createDirectories(gitLog.getParent());
+            out = Files.createTempFile(gitLog.getParent(), "git-out", ".tmp");
+            var pb = new ProcessBuilder(cmd).directory(dir.toFile())
+                    .redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")))
+                    .redirectOutput(out.toFile())
+                    .redirectError(ProcessBuilder.Redirect.appendTo(gitLog.toFile()));
+            pb.environment().putAll(GIT_ENV);
             Process p = pb.start();
-            String out = new String(p.getInputStream().readAllBytes());
-            if (p.waitFor() != 0) throw new IllegalStateException("git " + String.join(" ", args) + " failed (see " + gitLog + ")");
-            return out;
+            long deadline = System.nanoTime() + localTimeout.toNanos();
+            while (!p.waitFor(POLL.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                if (token.isCancelled() || System.nanoTime() > deadline) {
+                    p.descendants().forEach(ProcessHandle::destroyForcibly);
+                    p.destroyForcibly();
+                    p.waitFor();
+                    throw new IllegalStateException("git " + String.join(" ", args) + " timed out or was cancelled");
+                }
+            }
+            if (p.exitValue() != 0) throw new IllegalStateException("git " + String.join(" ", args) + " failed (see " + gitLog + ")");
+            return Files.readString(out, StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new IllegalStateException(e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(e);
+        } finally {
+            if (out != null) try { Files.deleteIfExists(out); } catch (IOException ignored) { }
         }
     }
 
-    private int run(Path workDir, String... cmd) {
+    private int run(Path workDir, Duration timeout, CancellationToken token, String... cmd) {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        boolean[] timedOut = {false};
+        CancellationToken bounded = () -> {
+            if (System.nanoTime() > deadline) timedOut[0] = true;
+            return timedOut[0] || token.isCancelled();
+        };
         try {
-            return runner.run(List.of(cmd), workDir, Map.of(), gitLog, () -> false, POLL).exitCode();
+            var r = runner.run(List.of(cmd), workDir, GIT_ENV, gitLog, bounded, POLL);
+            if (r.cancelled()) {
+                throw new IllegalStateException(String.join(" ", cmd) + (timedOut[0] ? " timed out" : " was cancelled"));
+            }
+            return r.exitCode();
         } catch (IOException e) {
             throw new IllegalStateException(e);
         } catch (InterruptedException e) {
