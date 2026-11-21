@@ -30,6 +30,7 @@ public class IdleGate {
     if (probed.isEmpty()) {
       return no("user idle probe failed");
     }
+    consecutiveFailures.set(0);
     Duration idle = probed.get();
     if (idle.compareTo(config.minUserIdle()) < 0) {
       return no("user active " + fmt(idle) + " < " + fmt(config.minUserIdle()));
@@ -59,6 +60,7 @@ public class IdleGate {
   public boolean userActive() {
     Optional<Duration> idle = probe.userIdle();
     if (idle.isEmpty()) {
+      // intentionally keeps counting (stays >= 3) until any successful probe resets it
       return consecutiveFailures.incrementAndGet() >= FAILURES_BEFORE_ACTIVE;
     }
     consecutiveFailures.set(0);

@@ -87,7 +87,7 @@ public class MacActivityProbe implements ActivityProbe {
       if (!Boolean.TRUE.equals(failing.put(name, true))) {
         logger.log(
             System.Logger.Level.WARNING,
-            "probe " + name + " failed, gate stays closed: " + e.getMessage(),
+            "probe " + name + " failed, gate stays closed: " + e,
             e);
       }
       return fallback;

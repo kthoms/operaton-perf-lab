@@ -85,7 +85,7 @@ class MacActivityProbeTest {
     assertThat(probe.userIdle()).isEmpty();
     assertThat(probe.userIdle()).isEmpty();
     assertThat(messages).hasSize(1);
-    assertThat(messages.get(0)).startsWith("WARNING").contains("ioreg").contains("boom");
+    assertThat(messages.get(0)).startsWith("WARNING").contains("ioreg").contains("IllegalStateException").contains("boom");
 
     broken[0] = false;
     assertThat(probe.userIdle()).contains(Duration.ofSeconds(1));

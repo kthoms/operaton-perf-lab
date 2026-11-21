@@ -144,4 +144,17 @@ class IdleGateTest {
     assertThat(d.ok()).isFalse();
     assertThat(d.reason()).isEqualTo("user idle probe failed");
   }
+
+  @Test
+  void successfulMayStartResetsFailureStreak() {
+    var p = new FakeProbe();
+    var g = gate(p, Duration.ofHours(3));
+    p.idleProbeFails = true;
+    assertThat(g.userActive()).isFalse();
+    assertThat(g.userActive()).isFalse();
+    p.idleProbeFails = false;
+    assertThat(g.mayStart(Duration.ofMinutes(1), NOW).ok()).isTrue();
+    p.idleProbeFails = true;
+    assertThat(g.userActive()).isFalse();
+  }
 }
