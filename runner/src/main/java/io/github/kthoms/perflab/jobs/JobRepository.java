@@ -104,6 +104,15 @@ public class JobRepository {
         id);
   }
 
+  /** Requeues a job stopped by a user cancellation; it gives back the attempt markRunning took. */
+  public void requeueCancelled(long id) {
+    update(
+        "update job set status='QUEUED', started_at=null, cancel_requested=false,"
+            + " attempts=greatest(attempts-1, 0) where id=? and status='RUNNING'",
+        "requeueCancelled " + id,
+        id);
+  }
+
   /** Recovers jobs left RUNNING by a crashed daemon; returns the number requeued. */
   public int requeueStale() {
     return update(

@@ -57,6 +57,21 @@ class JobRepositoryIT {
   }
 
   @Test
+  void requeueCancelledGivesTheAttemptBack() {
+    long id = enqueueBuild("a", Job.PRIORITY_BUILD);
+    repo.markRunning(id);
+    repo.requestCancel();
+
+    repo.requeueCancelled(id);
+
+    assertThat(repo.queued()).singleElement().satisfies(j -> assertThat(j.attempts()).isZero());
+    assertThat(repo.cancelRequested(id)).isFalse();
+    repo.markRunning(id);
+    repo.requeue(id); // an infrastructure failure does count
+    assertThat(repo.queued().get(0).attempts()).isEqualTo(1);
+  }
+
+  @Test
   void requeueStaleRecoversRunningJobs() {
     long id = enqueueBuild("a", Job.PRIORITY_BUILD);
     repo.markRunning(id);

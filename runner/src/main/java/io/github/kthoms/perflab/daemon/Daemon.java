@@ -221,7 +221,8 @@ public class Daemon {
           afterRun(runId);
         }
         case Cancelled cancelled -> {
-          s.jobs().requeue(job.id());
+          // a user cancellation is not a failed attempt: it never counts toward MAX_ATTEMPTS
+          s.jobs().requeueCancelled(job.id());
           LOG.log(Level.INFO, "job {0} cancelled and requeued", job.id());
         }
         case NotApplicable na -> {

@@ -220,8 +220,30 @@ class DaemonTest {
     assertThat(results.saved).isEmpty();
     FakeJobs.Row job = jobs.get(1);
     assertThat(job.status()).isEqualTo(JobStatus.QUEUED);
-    assertThat(job.attempts()).isEqualTo(1);
+    assertThat(job.attempts()).as("a user cancellation is not an attempt").isZero();
     assertThat(afterRunIds).isEmpty();
+  }
+
+  @Test
+  void repeatedCancellationsNeverFailTheJob() {
+    PerfLabConfig config = mainOnly(dataDir);
+    runner.script =
+        (token, every) -> {
+          jobs.requestCancel();
+          clock.advance(every);
+          token.isCancelled();
+          return new ProcessRunner.Result(143, true, Duration.ofMinutes(1));
+        };
+    Daemon daemon = daemon(config);
+    Daemon.Services s = services(config);
+
+    for (int i = 0; i < Daemon.MAX_ATTEMPTS + 2; i++) {
+      daemon.tick(s);
+    }
+
+    assertThat(runner.commands).hasSize(Daemon.MAX_ATTEMPTS + 2);
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.QUEUED);
+    assertThat(jobs.get(1).attempts()).isZero();
   }
 
   @Test
@@ -720,6 +742,16 @@ class DaemonTest {
       if (r.status == JobStatus.RUNNING) {
         r.status = JobStatus.QUEUED;
         r.cancelRequested = false;
+      }
+    }
+
+    @Override
+    public void requeueCancelled(long id) {
+      Row r = row(id);
+      if (r.status == JobStatus.RUNNING) {
+        r.status = JobStatus.QUEUED;
+        r.cancelRequested = false;
+        r.attempts = Math.max(0, r.attempts - 1);
       }
     }
 
