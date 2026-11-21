@@ -12,6 +12,9 @@ public final class DataDirGuard {
     /** Empty = OK, otherwise the reason the data dir is unusable. */
     public static Optional<String> check(PerfLabConfig config) {
         Path dir = config.dataDir();
+        if (dir == null) {
+            return Optional.of("dataDir not configured");
+        }
         if (!Files.exists(dir)) {
             return Optional.of("Data dir does not exist (volume not mounted?): " + dir);
         }

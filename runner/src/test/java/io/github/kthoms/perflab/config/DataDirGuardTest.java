@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
@@ -13,13 +14,19 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 class DataDirGuardTest {
 
     private static PerfLabConfig cfgWithDataDir(Path dataDir) {
-        return new PerfLabConfig(dataDir, dataDir, 14, "u", null, java.util.List.of(), java.util.List.of(), null);
+        return new PerfLabConfig(dataDir, dataDir, 14, "u", null, List.of(), List.of(), null);
     }
 
     @Test
     void missingDataDirBlocks(@TempDir Path t) {
         assertThat(DataDirGuard.check(cfgWithDataDir(t.resolve("absent"))))
                 .hasValueSatisfying(m -> assertThat(m).contains("absent"));
+    }
+
+    @Test
+    void nullDataDirBlocksWithoutException() {
+        assertThat(DataDirGuard.check(cfgWithDataDir(null)))
+                .hasValueSatisfying(m -> assertThat(m).contains("dataDir"));
     }
 
     @Test
@@ -36,7 +43,7 @@ class DataDirGuardTest {
 
     @Test
     void dataDirMustBeWritable(@TempDir Path t) {
-        Path ro = t.toFile().toPath();
+        Path ro = t;
         assumeFalse(System.getProperty("user.name").equals("root"));
         assertThat(ro.toFile().setWritable(false)).isTrue();
         try {

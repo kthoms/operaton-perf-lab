@@ -27,9 +27,43 @@ public final class ConfigLoader {
 
     public static PerfLabConfig load(Path yml) {
         try {
-            return MAPPER.readValue(yml.toFile(), PerfLabConfig.class);
+            PerfLabConfig config = MAPPER.readValue(yml.toFile(), PerfLabConfig.class);
+            if (config == null) {
+                throw new IllegalArgumentException("Config " + yml + " is empty");
+            }
+            validate(config, yml);
+            return config;
         } catch (IOException e) {
             throw new UncheckedIOException("Cannot load config " + yml + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static void validate(PerfLabConfig c, Path yml) {
+        require(c.dataDir(), "dataDir", yml);
+        require(c.backupDir(), "backupDir", yml);
+        require(c.upstreamUrl(), "upstreamUrl", yml);
+        require(c.resultsDb(), "resultsDb", yml);
+        require(c.resultsDb().jdbcUrl(), "resultsDb.jdbcUrl", yml);
+        require(c.resultsDb().user(), "resultsDb.user", yml);
+        require(c.resultsDb().password(), "resultsDb.password", yml);
+        require(c.branches(), "branches", yml);
+        for (var b : c.branches()) {
+            require(b, "branches[]", yml);
+            require(b.name(), "branches[].name", yml);
+            require(b.javaHome(), "branches[].javaHome", yml);
+            require(b.mavenArgs(), "branches[].mavenArgs", yml);
+        }
+        require(c.benchmarks(), "benchmarks", yml);
+        require(c.idle(), "idle", yml);
+        require(c.idle().minUserIdle(), "idle.minUserIdle", yml);
+        require(c.idle().heavyProcessNames(), "idle.heavyProcessNames", yml);
+        require(c.idle().pollInterval(), "idle.pollInterval", yml);
+        require(c.idle().activityCheckInterval(), "idle.activityCheckInterval", yml);
+    }
+
+    private static void require(Object value, String key, Path yml) {
+        if (value == null) {
+            throw new IllegalArgumentException("Config " + yml + ": required key '" + key + "' is missing");
         }
     }
 

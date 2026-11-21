@@ -2,7 +2,10 @@ package io.github.kthoms.perflab.config;
 
 import io.github.kthoms.perflab.config.PerfLabConfig.BranchConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 
@@ -44,5 +47,24 @@ class ConfigLoaderTest {
         assertThat(ConfigLoader.parseDuration("90m")).isEqualTo(Duration.ofMinutes(90));
         assertThat(ConfigLoader.parseDuration("20h")).isEqualTo(Duration.ofHours(20));
         assertThatThrownBy(() -> ConfigLoader.parseDuration("soon")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void missingDataDirKeyFailsAtLoad(@TempDir Path t) throws IOException {
+        String yml = Files.readString(Path.of("../config/perflab.example.yml"))
+                .replaceFirst("(?m)^dataDir:.*$", "");
+        Path f = Files.writeString(t.resolve("c.yml"), yml);
+        assertThatThrownBy(() -> ConfigLoader.load(f))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dataDir");
+    }
+
+    @Test
+    void missingIdleSectionFailsAtLoad(@TempDir Path t) throws IOException {
+        String yml = Files.readString(Path.of("../config/perflab.example.yml"));
+        Path f = Files.writeString(t.resolve("c.yml"), yml.substring(0, yml.indexOf("idle:")));
+        assertThatThrownBy(() -> ConfigLoader.load(f))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("idle");
     }
 }
