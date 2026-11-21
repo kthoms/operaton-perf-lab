@@ -20,9 +20,9 @@ docker compose -f infra/docker-compose.yml --env-file infra/.env up -d
 The `grafana-init` service fixes ownership of `$PERFLAB_DATA_DIR/grafana` for Grafana (uid 472),
 so no manual `chown` is needed.
 
-`PERFLAB_GRAFANA_RO_PASSWORD` (in `infra/.env`, default `grafana-ro`, no single quotes) is the
+`PERFLAB_GRAFANA_RO_PASSWORD` (in `infra/.env`, default `grafana-ro`, unquoted, no single quotes or whitespace) is the
 password of the read-only DB user `grafana_ro`. Grafana reads it from compose; the runner applies
-it on every start from its own environment, so both must see the same value. The launchd install
+it on every start from its own environment (if unset it leaves the password unchanged; a blank value is an error), so both must see the same value. The launchd install
 script (`ops/install-launchd.sh`) exports it from `infra/.env`. After changing it, re-run the
 install script and `docker compose ... up -d`.
 

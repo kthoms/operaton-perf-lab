@@ -47,7 +47,7 @@ class DatabaseIT {
 
   @Test
   void grafanaRoUserCanReadButNotWrite() throws SQLException {
-    Database.connect(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+    Database.connect(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword(), "grafana-ro");
     try (var c =
             java.sql.DriverManager.getConnection(pg.getJdbcUrl(), "grafana_ro", "grafana-ro");
         var st = c.createStatement()) {
@@ -71,6 +71,23 @@ class DatabaseIT {
     org.assertj.core.api.Assertions.assertThatThrownBy(
             () -> java.sql.DriverManager.getConnection(pg.getJdbcUrl(), "grafana_ro", "first-pw"))
         .isInstanceOf(SQLException.class);
+  }
+
+  @Test
+  void unsetPasswordLeavesGrafanaRoPasswordUnchanged() throws SQLException {
+    Database.connect(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword(), "kept-pw");
+    Database.connect(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword(), null);
+    try (var c = java.sql.DriverManager.getConnection(pg.getJdbcUrl(), "grafana_ro", "kept-pw")) {
+      assertThat(c.isValid(2)).isTrue();
+    }
+  }
+
+  @Test
+  void blankPasswordIsRejected() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> Database.connect(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword(), "  "))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("blank");
   }
 
   private static List<String> tables(Database db) throws SQLException {
