@@ -107,4 +107,21 @@ class JobRepositoryIT {
     repo.finish(id, JobStatus.DONE);
     assertThat(repo.hasOpen(JobKind.BUILD, "a", null, null)).isFalse();
   }
+
+  @Test
+  void lastFinishedCoversTerminalJobsOfTheSeriesOnly() {
+    assertThat(repo.lastFinished(JobKind.BUILD, "a", null, null)).isEmpty();
+    long running = repo.enqueue(JobKind.BUILD, "a", null, null, null, Job.PRIORITY_BUILD);
+    repo.markRunning(running);
+    assertThat(repo.lastFinished(JobKind.BUILD, "a", null, null)).isEmpty();
+
+    for (JobStatus terminal : new JobStatus[] {JobStatus.DONE, JobStatus.FAILED, JobStatus.NOT_APPLICABLE}) {
+      long id = repo.enqueue(JobKind.BUILD, "t-" + terminal, null, null, null, Job.PRIORITY_BUILD);
+      repo.markRunning(id);
+      repo.finish(id, terminal);
+      assertThat(repo.lastFinished(JobKind.BUILD, "t-" + terminal, null, null)).isPresent();
+    }
+    assertThat(repo.lastFinished(JobKind.BENCHMARK, "t-DONE", null, null)).isEmpty();
+    assertThat(repo.lastFinished(JobKind.BUILD, "t-DONE", "b1", null)).isEmpty();
+  }
 }

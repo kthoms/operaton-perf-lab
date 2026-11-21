@@ -105,8 +105,19 @@ public class BuildJobExecutor implements JobExecutor {
     boolean success = result.exitCode() == 0;
     List<Measurement> measurements = new ArrayList<>();
     if (success) {
-      measurements.addAll(SurefireExtractor.extract(config.checkout()));
-      measurements.addAll(ReactorSummaryExtractor.extract(log));
+      try {
+        measurements.addAll(SurefireExtractor.extract(config.checkout()));
+        measurements.addAll(ReactorSummaryExtractor.extract(log));
+      } catch (RuntimeException e) {
+        // never rebuild for an extractor problem: store the run as FAILED, keep the log
+        LOG.log(
+            System.Logger.Level.WARNING,
+            "job " + job.id() + ": build succeeded but extracting measurements failed, storing"
+                + " the run as FAILED: " + e,
+            e);
+        measurements.clear();
+        success = false;
+      }
     }
     RunRecord run =
         new RunRecord(

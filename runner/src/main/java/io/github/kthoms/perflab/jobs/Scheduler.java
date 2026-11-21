@@ -11,7 +11,10 @@ import java.util.Optional;
 
 /**
  * Enqueues the daily series: one build per configured branch and one benchmark job per benchmark
- * x db x branch, unless the series has an open job or a run started within the last 20 hours.
+ * x db x branch. A series is due only if it has no open job, no run started within the last 20
+ * hours, and no job that reached a terminal status within the last 20 hours (so a job that ended
+ * without a run, e.g. NOT_APPLICABLE or given up after infrastructure failures, is not retried
+ * every tick).
  */
 public class Scheduler {
 
@@ -46,13 +49,17 @@ public class Scheduler {
     if (jobs.hasOpen(kind, branch, benchmark, db)) {
       return;
     }
-    Optional<Instant> last = results.lastRunStart(kind, branch, benchmark, db);
-    if (last.isPresent() && !last.get().isBefore(now.minus(MIN_INTERVAL))) {
+    if (isRecent(results.lastRunStart(kind, branch, benchmark, db), now)
+        || isRecent(jobs.lastFinished(kind, branch, benchmark, db), now)) {
       return;
     }
     long id = jobs.enqueue(kind, branch, null, benchmark, db, priority);
     String series = benchmark == null ? branch : branch + " " + benchmark + " " + db;
     LOG.log(System.Logger.Level.INFO, "enqueued job {0}: {1} {2}", id, kind, series);
+  }
+
+  private static boolean isRecent(Optional<Instant> when, Instant now) {
+    return when.isPresent() && !when.get().isBefore(now.minus(MIN_INTERVAL));
   }
 
   private static <T> List<T> orEmpty(List<T> list) {

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.kthoms.perflab.env.Fingerprint;
 import io.github.kthoms.perflab.jobs.JobKind;
+import io.github.kthoms.perflab.jobs.JobStatus;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -32,6 +33,18 @@ public class ResultRepository {
 
   /** Stores the run and all measurements in one transaction; returns the run id. */
   public long save(RunRecord run, List<Measurement> measurements) {
+    return store(run, measurements, null);
+  }
+
+  /**
+   * Stores the run and its measurements and sets the job's terminal status in one transaction, so
+   * a stored run never leaves its job requeueable. Nothing is stored if any part fails.
+   */
+  public long saveAndFinish(RunRecord run, List<Measurement> measurements, JobStatus jobStatus) {
+    return store(run, measurements, jobStatus);
+  }
+
+  private long store(RunRecord run, List<Measurement> measurements, JobStatus jobStatus) {
     String runSql =
         "insert into run(job_id, kind, branch, commit_sha, db, benchmark, status, started_at,"
             + " finished_at, fingerprint, segment, command_line, log_path)"
@@ -77,6 +90,9 @@ public class ResultRepository {
           }
           ps.executeBatch();
         }
+        if (jobStatus != null) {
+          finishJob(c, run.jobId(), jobStatus);
+        }
         c.commit();
         return runId;
       } catch (SQLException | JsonProcessingException | RuntimeException e) {
@@ -85,6 +101,17 @@ public class ResultRepository {
       }
     } catch (SQLException | JsonProcessingException e) {
       throw new ResultRepositoryException("save run " + run.kind() + " " + run.branch(), e);
+    }
+  }
+
+  private static void finishJob(Connection c, long jobId, JobStatus status) throws SQLException {
+    try (PreparedStatement ps =
+        c.prepareStatement("update job set status=?, finished_at=now() where id=?")) {
+      ps.setString(1, status.name());
+      ps.setLong(2, jobId);
+      if (ps.executeUpdate() != 1) {
+        throw new SQLException("job " + jobId + " not found");
+      }
     }
   }
 

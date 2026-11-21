@@ -68,6 +68,7 @@ public class Daemon {
   private final Clock clock;
   private final Sleeper sleeper;
   private boolean staleJobsPossible;
+  private boolean tickFailing;
 
   public Daemon(
       PerfLabConfig config,
@@ -128,19 +129,33 @@ public class Daemon {
 
   void tick(Services s) {
     Instant now = clock.instant();
+    recordSample(s, now);
+    Optional<String> dataDirProblem = DataDirGuard.check(config);
+    if (dataDirProblem.isPresent()) {
+      // also no idle hooks: their targets (e.g. backupDir) may live on the missing volume
+      LOG.log(Level.WARNING, dataDirProblem.get() + " - starting no job");
+      return;
+    }
     try {
-      recordSample(s, now);
-      Optional<String> dataDirProblem = DataDirGuard.check(config);
-      if (dataDirProblem.isPresent()) {
-        LOG.log(Level.WARNING, dataDirProblem.get() + " - starting no job");
-      } else {
-        recoverStaleJobs(s);
-        s.scheduler().ensureDueJobs(now);
-        nextJob(s, now).ifPresent(job -> run(s, job));
+      recoverStaleJobs(s);
+      s.scheduler().ensureDueJobs(now);
+      nextJob(s, now).ifPresent(job -> run(s, job));
+      if (tickFailing) {
+        LOG.log(Level.INFO, "tick recovered");
+        tickFailing = false;
       }
     } catch (RuntimeException e) {
-      LOG.log(Level.WARNING, "tick failed: " + e, e);
+      if (tickFailing) {
+        LOG.log(Level.WARNING, "tick failed again: " + e);
+      } else {
+        LOG.log(Level.WARNING, "tick failed: " + e, e);
+        tickFailing = true;
+      }
     }
+    runIdleHooks();
+  }
+
+  private void runIdleHooks() {
     Instant after = clock.instant();
     for (IdleHook hook : idleHooks) {
       try {
@@ -195,9 +210,12 @@ public class Daemon {
       JobExecutor.Outcome outcome = s.executors().get(job.kind()).execute(job, cancelToken(s, job.id()));
       switch (outcome) {
         case Completed done -> {
-          long runId = s.results().save(done.run(), done.measurements());
           boolean success = "SUCCESS".equals(done.run().status());
-          s.jobs().finish(job.id(), success ? JobStatus.DONE : JobStatus.FAILED);
+          // one transaction: once the run is stored the job is terminal and never requeued
+          long runId =
+              s.results()
+                  .saveAndFinish(
+                      done.run(), done.measurements(), success ? JobStatus.DONE : JobStatus.FAILED);
           LOG.log(Level.INFO, "job {0} finished {1}, run {2}, log {3}", job.id(), done.run().status(), runId, done.run().logPath());
           afterRun(runId);
         }
@@ -255,30 +273,26 @@ public class Daemon {
         if (cancelled) {
           return true;
         }
-        Instant now = clock.instant();
-        if (lastCheck != null && now.isBefore(lastCheck.plus(minGap))) {
-          return false;
-        }
-        lastCheck = now;
-        if (s.gate().userActive()) {
-          LOG.log(Level.INFO, "job {0}: user active, cancelling", jobId);
-          cancelled = true;
-        } else if (cancelRequested(s, jobId)) {
-          LOG.log(Level.INFO, "job {0}: cancel requested", jobId);
-          cancelled = true;
+        try {
+          Instant now = clock.instant();
+          if (lastCheck != null && now.isBefore(lastCheck.plus(minGap))) {
+            return false;
+          }
+          lastCheck = now;
+          if (s.gate().userActive()) {
+            LOG.log(Level.INFO, "job {0}: user active, cancelling", jobId);
+            cancelled = true;
+          } else if (s.jobs().cancelRequested(jobId)) {
+            LOG.log(Level.INFO, "job {0}: cancel requested", jobId);
+            cancelled = true;
+          }
+        } catch (RuntimeException e) {
+          // must never escape the runner's wait loop and orphan the build's process tree
+          LOG.log(Level.WARNING, "job " + jobId + ": cancellation check failed, continuing: " + e);
         }
         return cancelled;
       }
     };
-  }
-
-  private static boolean cancelRequested(Services s, long jobId) {
-    try {
-      return s.jobs().cancelRequested(jobId);
-    } catch (RuntimeException e) {
-      LOG.log(Level.WARNING, "cannot read cancel flag of job " + jobId + ": " + e);
-      return false;
-    }
   }
 
   private static String describe(Job job) {

@@ -32,6 +32,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -51,18 +56,47 @@ class DaemonTest {
   List<Duration> sleeps;
   List<Long> afterRunIds;
   List<Instant> idleHookCalls;
+  final List<LogRecord> daemonLog = new ArrayList<>();
+  final Logger daemonLogger = Logger.getLogger(Daemon.class.getName());
+  final Handler capture =
+      new Handler() {
+        @Override
+        public void publish(LogRecord r) {
+          daemonLog.add(r);
+        }
+
+        @Override
+        public void flush() {}
+
+        @Override
+        public void close() {}
+      };
 
   @BeforeEach
   void setUp() {
     BuildFakes.quietLogs();
+    daemonLogger.setLevel(Level.ALL);
+    daemonLogger.setUseParentHandlers(false);
+    daemonLogger.addHandler(capture);
     clock = new MutableClock(T0);
     probe = new FakeProbe();
-    jobs = new FakeJobs();
-    results = new FakeResults();
+    jobs = new FakeJobs(clock::instant);
+    results = new FakeResults(jobs);
     runner = new FakeRunner();
     sleeps = new ArrayList<>();
     afterRunIds = new ArrayList<>();
     idleHookCalls = new ArrayList<>();
+  }
+
+  @AfterEach
+  void restoreLogging() {
+    daemonLogger.removeHandler(capture);
+    daemonLogger.setUseParentHandlers(true);
+    daemonLogger.setLevel(null);
+  }
+
+  private List<LogRecord> logged(Level level) {
+    return daemonLog.stream().filter(r -> r.getLevel().equals(level)).toList();
   }
 
   private Daemon daemon(PerfLabConfig config) {
@@ -246,6 +280,13 @@ class DaemonTest {
     assertThat(jobs.get(1).status()).isEqualTo(JobStatus.QUEUED);
     assertThat(jobs.get(1).attempts()).isZero();
     assertThat(runner.commands).isEmpty();
+    assertThat(idleHookCalls).isEmpty(); // backupDir may be on the missing volume
+    assertThat(logged(Level.WARNING))
+        .singleElement()
+        .satisfies(
+            r ->
+                assertThat(r.getMessage())
+                    .contains("Data dir does not exist", "unplugged-nvme", "starting no job"));
   }
 
   @Test
@@ -254,6 +295,7 @@ class DaemonTest {
     AtomicInteger attempts = new AtomicInteger();
     FakeJobs.Row stale = jobs.row(jobs.enqueue(JobKind.BUILD, "main", null, null, null, 10));
     stale.status = JobStatus.RUNNING;
+    probe.idle = Duration.ofMinutes(1); // owner busy: the first tick must not start the job
     List<Duration> sleepsSeen = sleeps;
     Daemon daemon =
         new Daemon(
@@ -289,17 +331,167 @@ class DaemonTest {
             config.idle().pollInterval());
     assertThat(attempts.get()).isEqualTo(9);
     assertThat(jobs.requeueStaleCalls).isEqualTo(1);
+    assertThat(stale.status()).isEqualTo(JobStatus.QUEUED); // RF3: left RUNNING, requeued on start
+    assertThat(runner.commands).isEmpty();
     assertThat(Thread.interrupted()).isTrue(); // interrupt status restored, then cleared here
+  }
+
+  @Test
+  void giveBackRequeuesBelowMaxAttemptsAndFailsAtCap() {
+    PerfLabConfig config = mainOnly(dataDir);
+    Daemon daemon = daemon(config);
+    Daemon.Services s = services(config);
+    checkout.checkoutFailure = new IllegalStateException("git checkout failed with 128");
+
+    daemon.tick(s);
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.QUEUED);
+    assertThat(jobs.get(1).attempts()).isEqualTo(1);
+
+    daemon.tick(s);
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.QUEUED);
+    assertThat(jobs.get(1).attempts()).isEqualTo(2);
+
+    daemon.tick(s);
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.FAILED);
+    assertThat(jobs.get(1).attempts()).isEqualTo(Daemon.MAX_ATTEMPTS);
+    assertThat(results.saved).isEmpty();
+  }
+
+  @Test
+  void permanentInfraFailureDoesNotReenqueueWithin20h() {
+    PerfLabConfig config = mainOnly(dataDir);
+    Daemon daemon = daemon(config);
+    Daemon.Services s = services(config);
+    checkout.checkoutFailure = new IllegalStateException("git checkout failed with 128");
+    for (int i = 0; i < Daemon.MAX_ATTEMPTS; i++) {
+      daemon.tick(s);
+    }
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.FAILED);
+
+    clock.advance(Duration.ofHours(1));
+    daemon.tick(s);
+    assertThat(jobs.all).hasSize(1);
+
+    clock.advance(Duration.ofHours(20));
+    daemon.tick(s);
+    assertThat(jobs.all).hasSize(2); // the next daily job tries again
+  }
+
+  @Test
+  void notApplicableDoesNotReenqueueWithin20h() {
+    PerfLabConfig config = mainOnly(dataDir);
+    Daemon daemon = daemon(config);
+    Daemon.Services s = services(config);
+    checkout.branchTips.remove("main"); // branch vanished upstream
+
+    daemon.tick(s);
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.NOT_APPLICABLE);
+
+    clock.advance(Duration.ofHours(1));
+    daemon.tick(s);
+    assertThat(jobs.all).hasSize(1);
+    assertThat(runner.commands).isEmpty();
+  }
+
+  @Test
+  void extractorFailureStoresFailedRunWithoutRebuild() {
+    PerfLabConfig config = mainOnly(dataDir);
+    runner.script =
+        (token, every) -> {
+          try {
+            java.nio.file.Files.delete(runner.logs.getLast());
+          } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+          }
+          return new ProcessRunner.Result(0, false, Duration.ofMinutes(90));
+        };
+    Daemon daemon = daemon(config);
+    Daemon.Services s = services(config);
+
+    daemon.tick(s);
+    clock.advance(Duration.ofMinutes(10));
+    daemon.tick(s);
+
+    assertThat(results.saved).singleElement().satisfies(saved -> {
+      assertThat(saved.run().status()).isEqualTo("FAILED");
+      assertThat(saved.measurements()).isEmpty();
+    });
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.FAILED);
+    assertThat(jobs.all).hasSize(1);
+    assertThat(runner.commands).hasSize(1);
+  }
+
+  @Test
+  void failedStorageStoresNothingAndGivesTheJobBack() {
+    PerfLabConfig config = mainOnly(dataDir);
+    results.saveFailure = new IllegalStateException("connection lost");
+    Daemon daemon = daemon(config);
+
+    daemon.tick(services(config));
+
+    assertThat(results.saved).isEmpty();
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.QUEUED);
+    assertThat(afterRunIds).isEmpty();
+  }
+
+  @Test
+  void cancellationCheckFailureIsNotCancellation() {
+    PerfLabConfig config = mainOnly(dataDir);
+    List<Boolean> observed = new ArrayList<>();
+    runner.script =
+        (token, every) -> {
+          clock.advance(every); // past the throttle, so the failing check really runs
+          probe.idleProbeThrows = true;
+          observed.add(token.isCancelled());
+          probe.idleProbeThrows = false;
+          probe.idle = Duration.ofSeconds(2);
+          clock.advance(every);
+          observed.add(token.isCancelled());
+          return new ProcessRunner.Result(143, true, Duration.ofMinutes(1));
+        };
+    Daemon daemon = daemon(config);
+
+    daemon.tick(services(config));
+
+    assertThat(observed).containsExactly(false, true);
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.QUEUED);
+    assertThat(logged(Level.WARNING))
+        .anySatisfy(r -> assertThat(r.getMessage()).contains("cancellation check failed"));
+  }
+
+  @Test
+  void tickFailureLogsStackTraceOnlyOnStateChange() {
+    PerfLabConfig config = mainOnly(dataDir);
+    Daemon daemon = daemon(config);
+    Daemon.Services s = services(config);
+    jobs.hasOpenFailure = new IllegalStateException("results DB gone");
+
+    daemon.tick(s);
+    daemon.tick(s);
+    jobs.hasOpenFailure = null;
+    daemon.tick(s);
+
+    List<LogRecord> warnings =
+        logged(Level.WARNING).stream().filter(r -> r.getMessage().startsWith("tick")).toList();
+    assertThat(warnings).hasSize(2);
+    assertThat(warnings.get(0).getThrown()).isNotNull();
+    assertThat(warnings.get(1).getThrown()).isNull();
+    assertThat(warnings.get(1).getMessage()).contains("results DB gone");
+    assertThat(logged(Level.INFO)).anySatisfy(r -> assertThat(r.getMessage()).contains("recovered"));
   }
 
   // ---- fakes ----
 
   static class FakeProbe implements ActivityProbe {
     Duration idle = Duration.ofHours(1);
+    boolean idleProbeThrows;
     int samples;
 
     @Override
     public Optional<Duration> userIdle() {
+      if (idleProbeThrows) {
+        throw new IllegalStateException("probe exploded");
+      }
       return Optional.of(idle);
     }
 
@@ -345,6 +537,7 @@ class DaemonTest {
       final String db;
       final int priority;
       JobStatus status = JobStatus.QUEUED;
+      Instant finishedAt;
       int attempts;
       boolean cancelRequested;
 
@@ -372,10 +565,13 @@ class DaemonTest {
     }
 
     final List<Row> all = new ArrayList<>();
+    final java.util.function.Supplier<Instant> now;
     int requeueStaleCalls;
+    RuntimeException hasOpenFailure;
 
-    FakeJobs() {
+    FakeJobs(java.util.function.Supplier<Instant> now) {
       super(null);
+      this.now = now;
     }
 
     Row get(long id) {
@@ -417,6 +613,22 @@ class DaemonTest {
     @Override
     public void finish(long id, JobStatus status) {
       row(id).status = status;
+      row(id).finishedAt = now.get();
+    }
+
+    @Override
+    public Optional<Instant> lastFinished(JobKind kind, String branch, String benchmark, String db) {
+      return all.stream()
+          .filter(r -> r.finishedAt != null && sameSeries(r, kind, branch, benchmark, db))
+          .map(r -> r.finishedAt)
+          .max(Instant::compareTo);
+    }
+
+    private static boolean sameSeries(Row r, JobKind kind, String branch, String benchmark, String db) {
+      return r.kind == kind
+          && java.util.Objects.equals(r.branch, branch)
+          && java.util.Objects.equals(r.benchmark, benchmark)
+          && java.util.Objects.equals(r.db, db);
     }
 
     @Override
@@ -454,14 +666,14 @@ class DaemonTest {
 
     @Override
     public boolean hasOpen(JobKind kind, String branch, String benchmark, String db) {
+      if (hasOpenFailure != null) {
+        throw hasOpenFailure;
+      }
       return all.stream()
           .anyMatch(
               r ->
-                  r.kind == kind
-                      && (r.status == JobStatus.QUEUED || r.status == JobStatus.RUNNING)
-                      && java.util.Objects.equals(r.branch, branch)
-                      && java.util.Objects.equals(r.benchmark, benchmark)
-                      && java.util.Objects.equals(r.db, db));
+                  (r.status == JobStatus.QUEUED || r.status == JobStatus.RUNNING)
+                      && sameSeries(r, kind, branch, benchmark, db));
     }
   }
 
@@ -469,14 +681,27 @@ class DaemonTest {
 
   static class FakeResults extends ResultRepository {
     final List<Saved> saved = new ArrayList<>();
+    final FakeJobs jobs;
+    RuntimeException saveFailure;
 
-    FakeResults() {
+    FakeResults(FakeJobs jobs) {
       super(null);
+      this.jobs = jobs;
     }
 
     @Override
     public long save(RunRecord run, List<Measurement> measurements) {
+      throw new UnsupportedOperationException("the daemon must store runs with saveAndFinish");
+    }
+
+    /** Atomic like the real one: either run stored and job finished, or nothing. */
+    @Override
+    public long saveAndFinish(RunRecord run, List<Measurement> measurements, JobStatus jobStatus) {
+      if (saveFailure != null) {
+        throw saveFailure;
+      }
       saved.add(new Saved(run, List.copyOf(measurements)));
+      jobs.finish(run.jobId(), jobStatus);
       return saved.size();
     }
 

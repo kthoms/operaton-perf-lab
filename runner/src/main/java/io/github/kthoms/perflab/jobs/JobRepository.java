@@ -5,9 +5,12 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import javax.sql.DataSource;
 
 /** Plain-JDBC persistence for the job queue. */
@@ -144,6 +147,30 @@ public class JobRepository {
       }
     } catch (SQLException e) {
       throw new JobRepositoryException("hasOpen " + kind + " " + branch, e);
+    }
+  }
+
+  /** When a job of this series last reached a terminal status (DONE, FAILED, NOT_APPLICABLE). */
+  public Optional<Instant> lastFinished(JobKind kind, String branch, String benchmark, String db) {
+    String sql =
+        "select max(finished_at) from job where kind=?"
+            + " and status in ('DONE','FAILED','NOT_APPLICABLE')"
+            + " and branch is not distinct from ?"
+            + " and benchmark is not distinct from ?"
+            + " and db is not distinct from ?";
+    try (Connection c = ds.getConnection();
+        PreparedStatement ps = c.prepareStatement(sql)) {
+      ps.setString(1, kind.name());
+      setNullable(ps, 2, branch);
+      setNullable(ps, 3, benchmark);
+      setNullable(ps, 4, db);
+      try (ResultSet rs = ps.executeQuery()) {
+        rs.next();
+        Timestamp ts = rs.getTimestamp(1);
+        return ts == null ? Optional.empty() : Optional.of(ts.toInstant());
+      }
+    } catch (SQLException e) {
+      throw new JobRepositoryException("lastFinished " + kind + " " + branch, e);
     }
   }
 

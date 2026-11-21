@@ -200,4 +200,23 @@ class BuildJobExecutorTest {
         done.measurements().stream().filter(m -> m.kpi().equals("build.module.wall")).toList();
     assertThat(modules).extracting(m -> m.dims().get("module")).containsExactly("Operaton - Engine");
   }
+
+  @Test
+  void extractorFailureAfterSuccessfulBuildYieldsFailedRunWithoutMeasurements() {
+    runner.script =
+        (token, every) -> {
+          try {
+            Files.delete(runner.logs.getLast()); // the reactor extractor cannot read the log
+          } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+          }
+          return new ProcessRunner.Result(0, false, Duration.ofMinutes(42));
+        };
+
+    Outcome outcome = executor.execute(branchJob("main"), NEVER);
+
+    assertThat(outcome).isInstanceOf(Completed.class);
+    assertThat(((Completed) outcome).run().status()).isEqualTo("FAILED");
+    assertThat(((Completed) outcome).measurements()).isEmpty();
+  }
 }
