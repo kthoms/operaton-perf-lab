@@ -163,7 +163,7 @@ public class Backup implements IdleHook {
       deleteQuietly(partial);
     }
     log.record(now, target);
-    deleteOldDumps(dir, now);
+    deleteOldDumps(dir, now, target);
     return target;
   }
 
@@ -187,13 +187,17 @@ public class Backup implements IdleHook {
     }
   }
 
-  private void deleteOldDumps(Path dir, Instant now) {
+  /** Never deletes {@code keep}, the dump just written, whatever the retention. */
+  private void deleteOldDumps(Path dir, Instant now, Path keep) {
     LocalDateTime cutoff =
         now.atZone(clock.getZone()).toLocalDateTime().minusDays(config.backupRetentionDays());
     try (Stream<Path> files = Files.list(dir)) {
       files
           .filter(
               p -> {
+                if (p.equals(keep)) {
+                  return false;
+                }
                 Matcher m = DUMP_NAME.matcher(p.getFileName().toString());
                 if (!m.matches()) {
                   return false;

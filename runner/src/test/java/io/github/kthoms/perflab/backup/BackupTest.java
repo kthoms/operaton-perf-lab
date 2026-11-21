@@ -138,6 +138,20 @@ class BackupTest {
   }
 
   @Test
+  void retentionNeverDeletesTheDumpJustWritten() throws Exception {
+    Path dir = Files.createDirectories(tmp.resolve("backups"));
+    // minute-precision name 10:30 is before a cutoff of now (10:30:20) minus 0 days
+    var backup =
+        new Backup(
+            config(dir, 0), COMPOSE, new MemoryLog(), new FakeRunner(),
+            Clock.fixed(NOW.plusSeconds(20), ZoneOffset.UTC));
+
+    Path dump = backup.run();
+
+    assertThat(dump).exists().hasContent("PGDMP-data");
+  }
+
+  @Test
   void backupRunsPgDumpInsideTheResultsDbContainer() throws Exception {
     Path dir = Files.createDirectories(tmp.resolve("backups"));
     var runner = new FakeRunner();

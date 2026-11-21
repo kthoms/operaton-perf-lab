@@ -75,4 +75,36 @@ class ConfigLoaderTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("idle");
     }
+
+    @Test
+    void backupRetentionBelowOneDayFailsAtLoad(@TempDir Path t) throws IOException {
+        String yml = Files.readString(Path.of("../config/perflab.example.yml"))
+                .replaceFirst("(?m)^backupRetentionDays:.*$", "backupRetentionDays: 0");
+        Path f = Files.writeString(t.resolve("c.yml"), yml);
+        assertThatThrownBy(() -> ConfigLoader.load(f))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("backupRetentionDays")
+                .hasMessageContaining(">= 1");
+    }
+
+    @Test
+    void missingBackupRetentionFailsAtLoad(@TempDir Path t) throws IOException {
+        String yml = Files.readString(Path.of("../config/perflab.example.yml"))
+                .replaceFirst("(?m)^backupRetentionDays:.*$", "");
+        Path f = Files.writeString(t.resolve("c.yml"), yml);
+        assertThatThrownBy(() -> ConfigLoader.load(f))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("backupRetentionDays");
+    }
+
+    @Test
+    void nonPositiveMaxLoadFailsAtLoad(@TempDir Path t) throws IOException {
+        String yml = Files.readString(Path.of("../config/perflab.example.yml"))
+                .replaceFirst("(?m)^  maxLoad1:.*$", "  maxLoad1: 0");
+        Path f = Files.writeString(t.resolve("c.yml"), yml);
+        assertThatThrownBy(() -> ConfigLoader.load(f))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("idle.maxLoad1")
+                .hasMessageContaining("> 0");
+    }
 }

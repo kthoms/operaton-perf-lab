@@ -41,6 +41,10 @@ public final class ConfigLoader {
     private static void validate(PerfLabConfig c, Path yml) {
         require(c.dataDir(), "dataDir", yml);
         require(c.backupDir(), "backupDir", yml);
+        if (c.backupRetentionDays() < 1) {
+            throw new IllegalArgumentException("Config " + yml + ": 'backupRetentionDays' must be >= 1 (days a backup"
+                    + " is kept), was " + c.backupRetentionDays() + " or missing");
+        }
         require(c.upstreamUrl(), "upstreamUrl", yml);
         require(c.resultsDb(), "resultsDb", yml);
         require(c.resultsDb().jdbcUrl(), "resultsDb.jdbcUrl", yml);
@@ -56,6 +60,10 @@ public final class ConfigLoader {
         require(c.benchmarks(), "benchmarks", yml);
         require(c.idle(), "idle", yml);
         require(c.idle().minUserIdle(), "idle.minUserIdle", yml);
+        if (!(c.idle().maxLoad1() > 0)) {
+            throw new IllegalArgumentException("Config " + yml + ": 'idle.maxLoad1' must be > 0 (highest 1-minute load"
+                    + " at which a job may start), was " + c.idle().maxLoad1() + " or missing");
+        }
         require(c.idle().heavyProcessNames(), "idle.heavyProcessNames", yml);
         require(c.idle().pollInterval(), "idle.pollInterval", yml);
         require(c.idle().activityCheckInterval(), "idle.activityCheckInterval", yml);
