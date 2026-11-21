@@ -18,28 +18,46 @@ DOMAIN="gui/$(id -u)"
 
 JAVA_HOME_DIR="${JAVA_HOME:-$(/usr/libexec/java_home -v 25)}"
 JAVA="$JAVA_HOME_DIR/bin/java"
-# grafana_ro password: exported variable wins, else infra/.env (same precedence as compose).
-# The runner applies it on start. One pair of surrounding quotes, CR and whitespace are stripped.
-ENV_FILE="${PERFLAB_ENV_FILE:-$REPO/infra/.env}"
-GRAFANA_RO_PASSWORD="${PERFLAB_GRAFANA_RO_PASSWORD:-}"
-if [ -z "$GRAFANA_RO_PASSWORD" ] && [ -f "$ENV_FILE" ]; then
-  line="$(grep -E '^PERFLAB_GRAFANA_RO_PASSWORD=' "$ENV_FILE" | tail -n1 || true)"
-  value="${line#*=}"
-  value="${value%$'\r'}"
-  value="$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-  case "$value" in
-    \"*\") value="${value#\"}"; value="${value%\"}" ;;
-    \'*\') value="${value#\'}"; value="${value%\'}" ;;
-  esac
-  GRAFANA_RO_PASSWORD="$value"
-  if [ -n "$line" ] && [ -z "$value" ]; then
-    echo "PERFLAB_GRAFANA_RO_PASSWORD is empty in $ENV_FILE" >&2; exit 1
+# grafana_ro password for the runner: exported variable wins, else the key in the env file
+# (infra/.env, same precedence as compose). One pair of surrounding quotes, CR and whitespace are
+# stripped. If neither source has it, the plist gets no entry and the runner leaves the DB
+# password unchanged.
+GRAFANA_RO_PASSWORD=""
+HAVE_RO_PASSWORD=""
+if [ "${PERFLAB_GRAFANA_RO_PASSWORD+x}" = x ]; then
+  GRAFANA_RO_PASSWORD="$PERFLAB_GRAFANA_RO_PASSWORD"
+  HAVE_RO_PASSWORD=1
+  RO_SOURCE="exported PERFLAB_GRAFANA_RO_PASSWORD"
+else
+  if [ -n "${PERFLAB_ENV_FILE:-}" ]; then
+    ENV_FILE="$PERFLAB_ENV_FILE"
+    [ -f "$ENV_FILE" ] || { echo "PERFLAB_ENV_FILE not found: $ENV_FILE" >&2; exit 1; }
+  else
+    ENV_FILE="$REPO/infra/.env"
+  fi
+  RO_SOURCE="$ENV_FILE"
+  if [ -f "$ENV_FILE" ] && grep -qE '^PERFLAB_GRAFANA_RO_PASSWORD=' "$ENV_FILE"; then
+    line="$(grep -E '^PERFLAB_GRAFANA_RO_PASSWORD=' "$ENV_FILE" | tail -n1)"
+    value="${line#*=}"
+    value="${value%$'\r'}"
+    value="$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    GRAFANA_RO_PASSWORD="$value"
+    HAVE_RO_PASSWORD=1
   fi
 fi
-GRAFANA_RO_PASSWORD="${GRAFANA_RO_PASSWORD:-grafana-ro}"
-case "$GRAFANA_RO_PASSWORD" in
-  *\'*|*[[:space:]]*) echo "PERFLAB_GRAFANA_RO_PASSWORD must not contain single quotes or whitespace" >&2; exit 1 ;;
-esac
+if [ -n "$HAVE_RO_PASSWORD" ]; then
+  [ -n "$GRAFANA_RO_PASSWORD" ] || { echo "PERFLAB_GRAFANA_RO_PASSWORD is empty ($RO_SOURCE)" >&2; exit 1; }
+  case "$GRAFANA_RO_PASSWORD" in
+    *\'*|*[[:space:]]*) echo "PERFLAB_GRAFANA_RO_PASSWORD must not contain single quotes or whitespace" >&2; exit 1 ;;
+    \"*|*\") echo "warning: PERFLAB_GRAFANA_RO_PASSWORD has an unmatched double quote; it is used literally" >&2 ;;
+  esac
+else
+  echo "note: PERFLAB_GRAFANA_RO_PASSWORD not found (exported or in $ENV_FILE): not set in the plist, the runner leaves the grafana_ro password unchanged" >&2
+fi
 
 DOCKER_HOST_VALUE="${DOCKER_HOST:-unix://$HOME/.colima/default/docker.sock}"
 
@@ -54,20 +72,41 @@ esc() {
     | sed -e 's/[\\&|]/\\&/g'
 }
 
-mkdir -p "$LOGDIR" "$AGENTS"
-umask 077   # the plist contains the grafana_ro password
+
+DRY_RUN=""
+[ "${PERFLAB_DRY_RUN:-}" = 1 ] && DRY_RUN=1   # render to a temp file only, never touch launchd
+
+umask 077   # the plist may contain the grafana_ro password
+mkdir -p "$LOGDIR"
+if [ -n "$DRY_RUN" ]; then
+  OUT="$(mktemp "${TMPDIR:-/tmp}/$LABEL.XXXXXX")"
+else
+  mkdir -p "$AGENTS"
+  OUT="$(mktemp "$AGENTS/.$LABEL.XXXXXX")"
+fi
+trap '[ ! -e "$OUT" ] || rm -f "$OUT"' EXIT
 sed -e "s|@JAVA@|$(esc "$JAVA")|g" \
     -e "s|@JAR@|$(esc "$JAR")|g" \
     -e "s|@CONFIG@|$(esc "$CONFIG")|g" \
     -e "s|@LOGDIR@|$(esc "$LOGDIR")|g" \
-    -e "s|@GRAFANA_RO_PASSWORD@|$(esc "$GRAFANA_RO_PASSWORD")|g" \
     -e "s|@DOCKER_HOST@|$(esc "$DOCKER_HOST_VALUE")|g" \
-    "$TEMPLATE" > "$TARGET"
-plutil -lint "$TARGET"
-chmod 600 "$TARGET"
+    "$TEMPLATE" > "$OUT"
+if [ -n "$HAVE_RO_PASSWORD" ]; then
+  sed -i.bak -e "s|@GRAFANA_RO_PASSWORD@|$(esc "$GRAFANA_RO_PASSWORD")|g" "$OUT"
+else
+  sed -i.bak -e '/PERFLAB_GRAFANA_RO_PASSWORD<\/key>/d' -e '/@GRAFANA_RO_PASSWORD@/d' "$OUT"
+fi
+rm -f "$OUT.bak"
+chmod 600 "$OUT"
+plutil -lint "$OUT"
 
-# PERFLAB_DRY_RUN=1: only render the plist (for checking), do not touch launchd
-[ -z "${PERFLAB_DRY_RUN:-}" ] || { echo "Rendered $TARGET (dry run)"; exit 0; }
+if [ -n "$DRY_RUN" ]; then
+  trap - EXIT
+  echo "Dry run: rendered to $OUT (mode 600, delete it when done); launchd and $TARGET untouched"
+  exit 0
+fi
+mv -f "$OUT" "$TARGET"
+trap - EXIT
 
 if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
   launchctl bootout "$DOMAIN/$LABEL"
@@ -77,5 +116,6 @@ if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     sleep 0.2
   done
 fi
+echo "Installing $TARGET"
 launchctl bootstrap "$DOMAIN" "$TARGET"
 echo "Installed and started $LABEL (logs: $LOGDIR)"
