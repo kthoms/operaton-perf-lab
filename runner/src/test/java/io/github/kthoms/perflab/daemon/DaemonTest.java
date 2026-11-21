@@ -729,8 +729,10 @@ class DaemonTest {
           .max(Instant::compareTo);
     }
 
+    /** Like the real repository: only scheduled jobs (no commit) belong to a series. */
     private static boolean sameSeries(Row r, JobKind kind, String branch, String benchmark, String db) {
-      return r.kind == kind
+      return r.commitSha == null
+          && r.kind == kind
           && java.util.Objects.equals(r.branch, branch)
           && java.util.Objects.equals(r.benchmark, benchmark)
           && java.util.Objects.equals(r.db, db);
@@ -833,6 +835,7 @@ class DaemonTest {
           .filter(
               r ->
                   r.kind() == kind
+                      && r.source().equals(RunRecord.SOURCE_BRANCH)
                       && r.branch().equals(branch)
                       && java.util.Objects.equals(r.benchmark(), benchmark)
                       && java.util.Objects.equals(r.db(), db))

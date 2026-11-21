@@ -14,7 +14,8 @@ import java.util.Optional;
  * x db x branch. A series is due only if it has no open job, no run started within the last 20
  * hours, and no job that reached a terminal status within the last 20 hours (so a job that ended
  * without a run, e.g. NOT_APPLICABLE or given up after infrastructure failures, is not retried
- * every tick).
+ * every tick). Only scheduled jobs and runs count: manual or bisect jobs of an explicit commit
+ * (run source 'commit') never suppress the daily series.
  */
 public class Scheduler {
 

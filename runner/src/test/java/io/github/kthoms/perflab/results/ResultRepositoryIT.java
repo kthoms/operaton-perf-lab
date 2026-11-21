@@ -192,6 +192,43 @@ class ResultRepositoryIT {
   }
 
   @Test
+  void sourceIsStoredAndCommitRunsDoNotCountForTheSchedule() throws SQLException {
+    RunRecord commitRun = withSource(run("SUCCESS", 5), RunRecord.SOURCE_COMMIT);
+    repo.save(commitRun, List.of());
+    assertThat(repo.lastRunStart(JobKind.BENCHMARK, "main", "b1", "h2")).isEmpty();
+    repo.save(run("FAILED", 5), List.of());
+    assertThat(repo.lastRunStart(JobKind.BENCHMARK, "main", "b1", "h2")).isPresent();
+    try (var c = db.dataSource().getConnection();
+        var st = c.createStatement();
+        var rs = st.executeQuery("select source from run order by id")) {
+      rs.next();
+      assertThat(rs.getString(1)).isEqualTo("commit");
+      rs.next();
+      assertThat(rs.getString(1)).isEqualTo("branch");
+    }
+  }
+
+  @Test
+  void sourceIsConstrained() throws SQLException {
+    try (var c = db.dataSource().getConnection();
+        var st = c.createStatement()) {
+      long job = jobs.enqueue(JobKind.BUILD, "main", null, null, null, 1);
+      assertThatThrownBy(
+              () ->
+                  st.execute(
+                      "insert into run(job_id, kind, branch, commit_sha, status, started_at, segment, source)"
+                          + " values (" + job + ", 'BUILD', 'main', 's', 'SUCCESS', now(), 'x', 'pr')"))
+          .hasMessageContaining("source");
+    }
+  }
+
+  private static RunRecord withSource(RunRecord r, String source) {
+    return new RunRecord(
+        r.jobId(), r.kind(), r.branch(), r.commitSha(), r.db(), r.benchmark(), r.status(),
+        r.startedAt(), r.finishedAt(), r.fingerprint(), r.commandLine(), r.logPath(), source);
+  }
+
+  @Test
   void lastRunStartIsLatestStartOfTheSeriesAnyStatus() {
     assertThat(repo.lastRunStart(JobKind.BENCHMARK, "main", "b1", "h2")).isEmpty();
     repo.save(run("FAILED", 5), List.of());

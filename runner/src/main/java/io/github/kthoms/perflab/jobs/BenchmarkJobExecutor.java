@@ -385,7 +385,7 @@ public class BenchmarkJobExecutor implements JobExecutor {
       String commandLine, Path log, List<Measurement> measurements) {
     RunRecord run = new RunRecord(
         job.id(), JobKind.BENCHMARK, branch.name(), sha, job.db(), job.benchmark(), status,
-        started, clock.instant(), fingerprint, commandLine, log);
+        started, clock.instant(), fingerprint, commandLine, log, RunRecord.sourceOf(job));
     return new Completed(run, measurements);
   }
 

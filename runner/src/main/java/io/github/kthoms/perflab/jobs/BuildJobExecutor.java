@@ -132,7 +132,8 @@ public class BuildJobExecutor implements JobExecutor {
             finished,
             fingerprint,
             String.join(" ", cmd),
-            log);
+            log,
+            RunRecord.sourceOf(job));
     return new Completed(run, measurements);
   }
 

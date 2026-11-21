@@ -16,6 +16,7 @@ import io.github.kthoms.perflab.jobs.JobExecutor.Completed;
 import io.github.kthoms.perflab.jobs.JobExecutor.NotApplicable;
 import io.github.kthoms.perflab.jobs.JobExecutor.Outcome;
 import io.github.kthoms.perflab.results.Measurement;
+import io.github.kthoms.perflab.results.RunRecord;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -138,6 +139,7 @@ class BenchmarkJobExecutorTest {
     assertThat(done.run().benchmark()).isEqualTo("task-authorization");
     assertThat(done.run().db()).isEqualTo("h2");
     assertThat(done.run().commitSha()).isEqualTo(MAIN_SHA);
+    assertThat(done.run().source()).isEqualTo(RunRecord.SOURCE_BRANCH);
     assertThat(done.run().logPath()).isEqualTo(config.logs().resolve("9-" + MAIN_SHA + ".log"));
     assertThat(done.measurements())
         .contains(
@@ -150,6 +152,15 @@ class BenchmarkJobExecutorTest {
             new Measurement("benchmark.operation.median.duration", 1.0, "ms",
                 Map.of("benchmark", "task-authorization", "operation", "count", "repetition", "1")))
         .hasSize(12); // per repetition: 3 iterations, median, 2 operation medians
+  }
+
+  @Test
+  void commitJobRunIsMarkedAsCommitSource() {
+    Job commitJob =
+        new Job(9, JobKind.BENCHMARK, null, MAIN_SHA, "task-authorization", "h2", Job.PRIORITY_MANUAL,
+            JobStatus.RUNNING, 1);
+    Completed done = (Completed) executor.execute(commitJob, token);
+    assertThat(done.run().source()).isEqualTo(RunRecord.SOURCE_COMMIT);
   }
 
   @Test

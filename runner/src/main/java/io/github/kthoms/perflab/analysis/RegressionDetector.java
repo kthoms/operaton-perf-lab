@@ -23,7 +23,8 @@ import javax.sql.DataSource;
  * the 10 successful runs of the same series and segment before them. A single outlier is never
  * flagged, and fewer than 5 baseline runs give no verdict. Because the previous run needs its own
  * 5-run baseline too, a series needs at least 6 earlier runs before the first verdict is possible.
- * The verdict is returned on every analysis, but a regression row is stored only once per step
+ * Only scheduled runs (source 'branch') are analysed and form baselines; commit runs of manual
+ * or bisect jobs are ignored. The verdict is returned on every analysis, but a regression row is stored only once per step
  * change: not when an earlier run since the last good one already has one.
  */
 public class RegressionDetector {
@@ -72,11 +73,12 @@ public class RegressionDetector {
     this.ds = db.dataSource();
   }
 
-  /** Analyses a stored run; returns the regressions flagged for it (empty for a FAILED run). Idempotent. */
+  /** Analyses a stored run; returns the regressions flagged for it (empty for a FAILED or commit run). Idempotent. */
   public List<Regression> analyze(long runId) {
     try (Connection c = ds.getConnection()) {
       Run run = loadRun(c, runId);
-      if (run == null || !"SUCCESS".equals(run.status)) {
+      // commit runs (manual, bisect) are no part of a series: never analysed, never a baseline
+      if (run == null || !"SUCCESS".equals(run.status) || !"branch".equals(run.source)) {
         return List.of();
       }
       List<Regression> flagged = new ArrayList<>();
@@ -158,7 +160,9 @@ public class RegressionDetector {
     return runs.stream().map(r -> r.value).toList();
   }
 
-  private record Run(long id, String status, String kind, String branch, String db, String segment, String commitSha) {}
+  private record Run(
+      long id, String status, String kind, String branch, String db, String segment, String commitSha,
+      String source) {}
 
   private record Series(String kpi, Map<String, String> dims) {
     String key(Run run) {
@@ -174,7 +178,7 @@ public class RegressionDetector {
   private static Run loadRun(Connection c, long runId) throws SQLException {
     try (PreparedStatement ps =
         c.prepareStatement(
-            "select id, status, kind, branch, db, segment, commit_sha from run where id=?")) {
+            "select id, status, kind, branch, db, segment, commit_sha, source from run where id=?")) {
       ps.setLong(1, runId);
       try (ResultSet rs = ps.executeQuery()) {
         return rs.next()
@@ -185,7 +189,8 @@ public class RegressionDetector {
                 rs.getString(4),
                 rs.getString(5),
                 rs.getString(6),
-                rs.getString(7))
+                rs.getString(7),
+                rs.getString(8))
             : null;
       }
     }
@@ -219,7 +224,7 @@ public class RegressionDetector {
     String sql =
         "select r.id, r.commit_sha, array_agg(m.value) from run r join measurement m on m.run_id=r.id"
             + " join run cur on cur.id=?"
-            + " where r.status='SUCCESS' and r.kind=cur.kind and r.branch=cur.branch"
+            + " where r.status='SUCCESS' and r.source='branch' and r.kind=cur.kind and r.branch=cur.branch"
             + " and r.db is not distinct from cur.db and r.segment=cur.segment"
             + " and (r.started_at, r.id) < (cur.started_at, cur.id)"
             + " and m.kpi=? and (coalesce(m.dims,'{}'::jsonb) - 'repetition' - 'iteration') = ?::jsonb"

@@ -174,6 +174,14 @@ class BuildJobExecutorTest {
   }
 
   @Test
+  void runSourceIsBranchForBranchJobsAndCommitForCommitJobs() {
+    Completed branchRun = (Completed) executor.execute(branchJob("main"), NEVER);
+    Completed commitRun = (Completed) executor.execute(commitJob(MAIN_SHA), NEVER);
+    assertThat(branchRun.run().source()).isEqualTo(RunRecord.SOURCE_BRANCH);
+    assertThat(commitRun.run().source()).isEqualTo(RunRecord.SOURCE_COMMIT);
+  }
+
+  @Test
   void commitJobOnlyOnMaintenanceBranchUsesThatBranchConfig() {
     Completed done = (Completed) executor.execute(commitJob(OTHER_SHA), NEVER);
 

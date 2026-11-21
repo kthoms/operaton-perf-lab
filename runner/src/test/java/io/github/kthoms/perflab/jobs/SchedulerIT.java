@@ -136,6 +136,28 @@ class SchedulerIT {
   }
 
   @Test
+  void manualCommitRunsAndJobsDoNotSuppressTheDailySeries() {
+    long jobId = jobs.enqueue(JobKind.BUILD, "main", "a".repeat(40), null, null, Job.PRIORITY_MANUAL);
+    jobs.markRunning(jobId);
+    Instant started = NOW.minus(Duration.ofHours(1));
+    results.saveAndFinish(
+        new RunRecord(
+            jobId, JobKind.BUILD, "main", "a".repeat(40), null, null, "SUCCESS", started,
+            started.plusSeconds(60), new Fingerprint(Map.of("k", "v"), Map.of()), "mvnw",
+            Path.of("/l.log"), RunRecord.SOURCE_COMMIT),
+        List.of(),
+        JobStatus.DONE);
+    jobs.enqueue(JobKind.BUILD, "1.0", "b".repeat(40), null, null, Job.PRIORITY_MANUAL); // open
+
+    scheduler.ensureDueJobs(NOW);
+
+    assertThat(jobs.queued())
+        .filteredOn(j -> j.commitSha() == null)
+        .extracting(Job::kind, Job::branch)
+        .contains(tuple(JobKind.BUILD, "main"), tuple(JobKind.BUILD, "1.0"));
+  }
+
+  @Test
   void notApplicableDoesNotReenqueueWithin20h() {
     finishedJob(JobKind.BUILD, "main", null, null, JobStatus.NOT_APPLICABLE, NOW.minus(Duration.ofHours(1)));
     finishedJob(JobKind.BUILD, "1.0", null, null, JobStatus.NOT_APPLICABLE, NOW.minus(Duration.ofHours(21)));

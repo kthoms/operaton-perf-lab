@@ -27,6 +27,7 @@ class RegressionDetectorIT {
   Database db;
   RegressionDetector detector;
   int counter;
+  String nextSource = "branch";
 
   @BeforeEach
   void setUp() throws Exception {
@@ -54,13 +55,14 @@ class RegressionDetectorIT {
       long run;
       try (PreparedStatement ps =
           c.prepareStatement(
-              "insert into run(job_id, kind, branch, commit_sha, db, status, started_at, segment)"
-                  + " values (?, 'BUILD', 'main', ?, 'h2', ?, ?, ?) returning id")) {
+              "insert into run(job_id, kind, branch, commit_sha, db, status, started_at, segment, source)"
+                  + " values (?, 'BUILD', 'main', ?, 'h2', ?, ?, ?, ?) returning id")) {
         ps.setLong(1, job);
         ps.setString(2, "sha" + n);
         ps.setString(3, status);
         ps.setTimestamp(4, java.sql.Timestamp.from(T0.plusSeconds(n * 3600L)));
         ps.setString(5, segment);
+        ps.setString(6, nextSource);
         try (ResultSet rs = ps.executeQuery()) {
           rs.next();
           run = rs.getLong(1);
@@ -174,6 +176,24 @@ class RegressionDetectorIT {
       detector.analyze(next);
       detector.analyze(next);
     }
+    assertThat(storedRegressions()).isEqualTo(1);
+  }
+
+  @Test
+  void commitRunsAreNeitherBaselineNorAnalysed() throws Exception {
+    baseline("s", NOISY);
+    ok(200);
+    nextSource = "commit";
+    long bisect1 = ok(100); // manual bisect runs in between must not be "the previous run"
+    long bisect2 = ok(400);
+    nextSource = "branch";
+    long second = ok(210);
+
+    assertThat(detector.analyze(bisect2)).isEmpty();
+    var found = detector.analyze(second);
+    assertThat(found).hasSize(1);
+    assertThat(found.get(0).baselineMedian()).isEqualTo(100.5); // the commit runs are not in it
+    assertThat(detector.analyze(bisect1)).isEmpty();
     assertThat(storedRegressions()).isEqualTo(1);
   }
 

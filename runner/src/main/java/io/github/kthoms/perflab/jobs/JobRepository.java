@@ -138,9 +138,11 @@ public class JobRepository {
     }
   }
 
+  /** Whether a scheduled job (no commit) of this series is queued or running. */
   public boolean hasOpen(JobKind kind, String branch, String benchmark, String db) {
     String sql =
         "select exists(select 1 from job where kind=? and status in ('QUEUED','RUNNING')"
+            + " and commit_sha is null"
             + " and branch is not distinct from ?"
             + " and benchmark is not distinct from ?"
             + " and db is not distinct from ?)";
@@ -159,11 +161,14 @@ public class JobRepository {
     }
   }
 
-  /** When a job of this series last reached a terminal status (DONE, FAILED, NOT_APPLICABLE). */
+  /**
+   * When a scheduled job (no commit) of this series last reached a terminal status (DONE, FAILED,
+   * NOT_APPLICABLE).
+   */
   public Optional<Instant> lastFinished(JobKind kind, String branch, String benchmark, String db) {
     String sql =
         "select max(finished_at) from job where kind=?"
-            + " and status in ('DONE','FAILED','NOT_APPLICABLE')"
+            + " and status in ('DONE','FAILED','NOT_APPLICABLE') and commit_sha is null"
             + " and branch is not distinct from ?"
             + " and benchmark is not distinct from ?"
             + " and db is not distinct from ?";

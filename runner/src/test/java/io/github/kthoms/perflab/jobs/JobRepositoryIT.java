@@ -113,7 +113,9 @@ class JobRepositoryIT {
   @Test
   void hasOpenCoversQueuedAndRunningOnly() {
     assertThat(repo.hasOpen(JobKind.BUILD, "a", null, null)).isFalse();
-    long id = enqueueBuild("a", Job.PRIORITY_BUILD);
+    enqueueBuild("a", Job.PRIORITY_MANUAL); // a commit job is no part of the scheduled series
+    assertThat(repo.hasOpen(JobKind.BUILD, "a", null, null)).isFalse();
+    long id = repo.enqueue(JobKind.BUILD, "a", null, null, null, Job.PRIORITY_BUILD);
     assertThat(repo.hasOpen(JobKind.BUILD, "a", null, null)).isTrue();
     assertThat(repo.hasOpen(JobKind.BUILD, "other", null, null)).isFalse();
     assertThat(repo.hasOpen(JobKind.BENCHMARK, "a", null, null)).isFalse();
@@ -138,5 +140,9 @@ class JobRepositoryIT {
     }
     assertThat(repo.lastFinished(JobKind.BENCHMARK, "t-DONE", null, null)).isEmpty();
     assertThat(repo.lastFinished(JobKind.BUILD, "t-DONE", "b1", null)).isEmpty();
+    long commitJob = enqueueBuild("c", Job.PRIORITY_MANUAL);
+    repo.markRunning(commitJob);
+    repo.finish(commitJob, JobStatus.DONE);
+    assertThat(repo.lastFinished(JobKind.BUILD, "c", null, null)).isEmpty();
   }
 }

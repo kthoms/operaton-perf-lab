@@ -47,8 +47,8 @@ public class ResultRepository {
   private long store(RunRecord run, List<Measurement> measurements, JobStatus jobStatus) {
     String runSql =
         "insert into run(job_id, kind, branch, commit_sha, db, benchmark, status, started_at,"
-            + " finished_at, fingerprint, segment, command_line, log_path)"
-            + " values (?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?)";
+            + " finished_at, fingerprint, segment, command_line, log_path, source)"
+            + " values (?,?,?,?,?,?,?,?,?,?::jsonb,?,?,?,?)";
     String measurementSql =
         "insert into measurement(run_id, kpi, value, unit, dims) values (?,?,?,?,?::jsonb)";
     try (Connection c = ds.getConnection()) {
@@ -73,6 +73,7 @@ public class ResultRepository {
           ps.setString(11, run.fingerprint().segment());
           setNullable(ps, 12, run.commandLine());
           setNullable(ps, 13, run.logPath() == null ? null : run.logPath().toString());
+          ps.setString(14, run.source());
           ps.executeUpdate();
           try (ResultSet rs = ps.getGeneratedKeys()) {
             rs.next();
@@ -143,10 +144,13 @@ public class ResultRepository {
     }
   }
 
-  /** Start of the most recent run of one series, any status; empty if it never ran. */
+  /**
+   * Start of the most recent scheduled (source 'branch') run of one series, any status; empty if it
+   * never ran. Commit runs (manual, bisect) do not count.
+   */
   public Optional<Instant> lastRunStart(JobKind kind, String branch, String benchmark, String db) {
     String sql =
-        "select max(started_at) from run where kind=? and branch=?"
+        "select max(started_at) from run where kind=? and branch=? and source='branch'"
             + " and benchmark is not distinct from ? and db is not distinct from ?";
     try (Connection c = ds.getConnection();
         PreparedStatement ps = c.prepareStatement(sql)) {
