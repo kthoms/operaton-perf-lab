@@ -41,6 +41,16 @@ their expected duration.
 - Activity samples are recorded every poll interval, and while a job runs at most once per poll
   interval from the job's cancellation check, so the history has no gaps during long builds.
 
+## Dashboards
+
+Trend panels show only scheduled runs (`run.source = 'branch'`); manual and bisect runs of an
+explicit commit (`source = 'commit'`) are stored but appear in no trend, annotation or regression
+baseline. The engine module, total build wall and benchmark median panels draw a gray noise band for
+the branch (and database) chosen in the "Noise band" variables: the median of the previous 10 runs
+of the same segment +- max(3 x MAD, 3 % of the median, absolute floor), the same threshold the
+regression detector uses (floors: test module 1 s, build wall 30 s, benchmark median 1 ms, operation
+median 0.5 ms). The band starts once 5 earlier runs exist.
+
 ## Tests
 
 Integration tests (`*IT`) use Testcontainers (`postgres:17`) and run in `mvn verify`.

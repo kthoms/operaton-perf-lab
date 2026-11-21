@@ -51,4 +51,42 @@ class DashboardQueriesTest {
                     .as(q.where())
                     .containsAnyOf("r.source='branch'", "source='branch'"));
   }
+
+  static JsonNode panel(String dashboard, String title) throws IOException {
+    JsonNode d = new ObjectMapper().readTree(DASHBOARDS.resolve(dashboard).toFile());
+    for (JsonNode p : d.path("panels")) {
+      if (p.path("title").asText().equals(title)) {
+        return p;
+      }
+    }
+    throw new AssertionError("no panel " + title + " in " + dashboard);
+  }
+
+  /** The band query (refId B) of a panel. */
+  static String bandSql(String dashboard, String title) throws IOException {
+    for (JsonNode t : panel(dashboard, title).path("targets")) {
+      if (t.path("refId").asText().equals("B")) {
+        return t.path("rawSql").asText();
+      }
+    }
+    throw new AssertionError("no band query in " + title);
+  }
+
+  @Test
+  void trendPanelsHaveANoiseBandFilledBetweenTwoSeries() throws IOException {
+    record Band(String dashboard, String title, String floor) {}
+    for (Band b :
+        List.of(
+            new Band("build-tests.json", "Engine module test time", "1.0"),
+            new Band("build-tests.json", "Total build wall time", "30.0"),
+            new Band("benchmarks.json", "Median per database and branch ($benchmark)", "1.0"))) {
+      String sql = bandSql(b.dashboard(), b.title());
+      assertThat(sql)
+          .as(b.title())
+          .contains("'noise band hi'", "'noise band lo'", "limit 10", "3 * d.mad", "0.03 * md.med",
+              ", " + b.floor() + ")", "r2.segment=r.segment", "r2.source='branch'");
+      JsonNode overrides = panel(b.dashboard(), b.title()).path("fieldConfig").path("overrides");
+      assertThat(overrides.toString()).contains("\"custom.fillBelowTo\"", "\"noise band lo\"");
+    }
+  }
 }

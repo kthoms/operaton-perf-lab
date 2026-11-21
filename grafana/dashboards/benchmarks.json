@@ -82,6 +82,46 @@
         "multi": true,
         "current": {},
         "options": []
+      },
+      {
+        "name": "bandBranch",
+        "label": "Noise band branch",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "query": "select distinct branch from run where kind='BENCHMARK' and source='branch' order by 1",
+        "definition": "select distinct branch from run where kind='BENCHMARK' and source='branch' order by 1",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "text": "main",
+          "value": "main"
+        },
+        "options": []
+      },
+      {
+        "name": "bandDb",
+        "label": "Noise band database",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "query": "select distinct db from run where kind='BENCHMARK' and source='branch' order by 1",
+        "definition": "select distinct db from run where kind='BENCHMARK' and source='branch' order by 1",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "text": "h2",
+          "value": "h2"
+        },
+        "options": []
       }
     ]
   },
@@ -145,7 +185,70 @@
             "showPoints": "auto"
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "noise band hi"
+            },
+            "properties": [
+              {
+                "id": "custom.fillBelowTo",
+                "value": "noise band lo"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 20
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "gray"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "noise band lo"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": true,
+                  "tooltip": false,
+                  "viz": false
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "gray"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -171,8 +274,20 @@
           "format": "time_series",
           "rawQuery": true,
           "rawSql": "select r.started_at as time, r.branch || ' / ' || r.db || ' (' || r.segment || ')' as metric,\n  percentile_cont(0.5) within group (order by m.value) as value\nfrom measurement m join run r on r.id=m.run_id\nwhere m.kpi='benchmark.median.duration' and r.kind='BENCHMARK' and r.source='branch' and r.status='SUCCESS' and r.benchmark=${benchmark:sqlstring} and r.branch in (${branch:sqlstring}) and r.db in (${db:sqlstring}) and r.segment in (${segment:sqlstring}) and $__timeFilter(r.started_at)\ngroup by r.id, r.started_at, r.branch, r.db, r.segment\norder by 1"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, s.name as metric, s.v as value\nfrom run r\njoin lateral (\n  select array_agg(h.v) as vs from (\n    select percentile_cont(0.5) within group (order by m2.value) as v\n    from run r2 join measurement m2 on m2.run_id=r2.id\n    where r2.kind='BENCHMARK' and r2.source='branch' and r2.status='SUCCESS' and r2.branch=r.branch and r2.segment=r.segment and r2.db is not distinct from r.db and r2.benchmark is not distinct from r.benchmark and m2.kpi='benchmark.median.duration'\n      and (r2.started_at, r2.id) < (r.started_at, r.id)\n    group by r2.id, r2.started_at order by r2.started_at desc, r2.id desc limit 10) h) b on true\njoin lateral (select percentile_cont(0.5) within group (order by x) as med from unnest(b.vs) x) md on true\njoin lateral (select percentile_cont(0.5) within group (order by abs(x - md.med)) as mad from unnest(b.vs) x) d on true\ncross join lateral (values ('noise band hi', md.med + greatest(3 * d.mad, 0.03 * md.med, 1.0)),\n                           ('noise band lo', md.med - greatest(3 * d.mad, 0.03 * md.med, 1.0))) s(name, v)\nwhere r.kind='BENCHMARK' and r.source='branch' and r.status='SUCCESS' and r.benchmark=${benchmark:sqlstring} and r.branch=${bandBranch:sqlstring} and r.db=${bandDb:sqlstring} and r.segment in (${segment:sqlstring}) and cardinality(b.vs) >= 5 and $__timeFilter(r.started_at)\norder by 1"
         }
-      ]
+      ],
+      "description": "Gray area: noise band of the scheduled runs of the noise-band branch and database (same segment): median of the previous 10 runs +- max(3 x MAD, 3% of the median, 1 ms), the regression detector's threshold. Shown once 5 earlier runs exist. Manual/bisect commit runs are excluded."
     },
     {
       "id": 5,
