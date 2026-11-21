@@ -56,6 +56,7 @@ class DaemonTest {
   List<Duration> sleeps;
   List<Long> afterRunIds;
   List<Instant> idleHookCalls;
+  Duration predictedIdle = Duration.ofHours(8);
   final List<LogRecord> daemonLog = new ArrayList<>();
   final Logger daemonLogger = Logger.getLogger(Daemon.class.getName());
   final Handler capture =
@@ -253,6 +254,37 @@ class DaemonTest {
 
     assertThat(jobs.get(1).status()).isEqualTo(JobStatus.NOT_APPLICABLE);
     assertThat(results.saved).isEmpty();
+  }
+
+  @Test
+  void manualJobIgnoresThePredictionButScheduledJobsWait() {
+    PerfLabConfig config = mainOnly(dataDir);
+    predictedIdle = Duration.ZERO; // cold start: nothing known yet
+    Daemon daemon = daemon(config);
+    Daemon.Services s = services(config);
+
+    daemon.tick(s);
+    assertThat(jobs.get(1).status()).as("scheduled build").isEqualTo(JobStatus.QUEUED);
+    assertThat(runner.commands).isEmpty();
+
+    long manual = jobs.enqueue(JobKind.BUILD, null, MAIN_SHA, null, null, Job.PRIORITY_MANUAL);
+    daemon.tick(s);
+    assertThat(jobs.get(manual).status()).isEqualTo(JobStatus.DONE);
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.QUEUED);
+  }
+
+  @Test
+  void manualJobStillWaitsForAnIdleUser() {
+    PerfLabConfig config = mainOnly(dataDir);
+    predictedIdle = Duration.ZERO;
+    probe.idle = Duration.ofMinutes(1);
+    jobs.enqueue(JobKind.BUILD, null, MAIN_SHA, null, null, Job.PRIORITY_MANUAL);
+    Daemon daemon = daemon(config);
+
+    daemon.tick(services(config));
+
+    assertThat(jobs.get(1).status()).isEqualTo(JobStatus.QUEUED);
+    assertThat(runner.commands).isEmpty();
   }
 
   @Test
@@ -523,7 +555,7 @@ class DaemonTest {
 
     @Override
     public Duration predictedIdle(Instant now) {
-      return Duration.ofHours(8);
+      return predictedIdle;
     }
   }
 

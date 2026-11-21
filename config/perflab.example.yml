@@ -26,3 +26,4 @@ idle:
   heavyProcessNames: [java, mvn, gradle, idea]
   pollInterval: 1m
   activityCheckInterval: 5s
+  # coldStartWindow: "22:00-07:00"   # optional; local times at which slots without history count as idle

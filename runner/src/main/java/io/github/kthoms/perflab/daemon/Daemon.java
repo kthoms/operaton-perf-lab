@@ -192,7 +192,8 @@ public class Daemon {
         continue;
       }
       Duration expected = s.estimator().expected(job);
-      IdleGate.Decision decision = s.gate().mayStart(expected, now);
+      boolean manual = job.priority() == Job.PRIORITY_MANUAL;
+      IdleGate.Decision decision = s.gate().mayStart(expected, now, manual);
       if (decision.ok()) {
         return Optional.of(job);
       }

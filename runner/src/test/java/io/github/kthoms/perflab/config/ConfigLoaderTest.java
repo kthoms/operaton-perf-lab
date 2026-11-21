@@ -107,4 +107,34 @@ class ConfigLoaderTest {
                 .hasMessageContaining("idle.maxLoad1")
                 .hasMessageContaining("> 0");
     }
+
+    @Test
+    void coldStartWindowDefaultsToNightAndIsConfigurable(@TempDir Path t) throws IOException {
+        var c = ConfigLoader.load(Path.of("../config/perflab.example.yml"));
+        assertThat(c.idle().coldStartWindow()).isEqualTo(TimeWindow.parse("22:00-07:00"));
+        String yml = Files.readString(Path.of("../config/perflab.example.yml")) + "  coldStartWindow: \"23:30-05:15\"\n";
+        Path f = Files.writeString(t.resolve("c.yml"), yml);
+        assertThat(ConfigLoader.load(f).idle().coldStartWindow())
+                .isEqualTo(new TimeWindow(java.time.LocalTime.of(23, 30), java.time.LocalTime.of(5, 15)));
+    }
+
+    @Test
+    void invalidColdStartWindowFailsAtLoad(@TempDir Path t) throws IOException {
+        String yml = Files.readString(Path.of("../config/perflab.example.yml")) + "  coldStartWindow: nightly\n";
+        Path f = Files.writeString(t.resolve("c.yml"), yml);
+        assertThatThrownBy(() -> ConfigLoader.load(f)).hasMessageContaining("coldStartWindow");
+    }
+
+    @Test
+    void timeWindowContainsHandlesMidnightWrap() {
+        var night = TimeWindow.parse("22:00-07:00");
+        assertThat(night.contains(java.time.LocalTime.of(22, 0))).isTrue();
+        assertThat(night.contains(java.time.LocalTime.of(3, 0))).isTrue();
+        assertThat(night.contains(java.time.LocalTime.of(7, 0))).isFalse();
+        assertThat(night.contains(java.time.LocalTime.of(12, 0))).isFalse();
+        var day = TimeWindow.parse("09:00-17:00");
+        assertThat(day.contains(java.time.LocalTime.of(9, 0))).isTrue();
+        assertThat(day.contains(java.time.LocalTime.of(17, 0))).isFalse();
+        assertThat(day.contains(java.time.LocalTime.of(8, 59))).isFalse();
+    }
 }

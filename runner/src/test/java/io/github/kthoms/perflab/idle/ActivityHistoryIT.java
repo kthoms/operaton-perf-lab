@@ -2,6 +2,7 @@ package io.github.kthoms.perflab.idle;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.kthoms.perflab.config.TimeWindow;
 import io.github.kthoms.perflab.db.Database;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -53,7 +54,34 @@ class ActivityHistoryIT {
   }
 
   @Test
-  void unknownSlotsAreNotIdle() {
+  void unknownSlotsOutsideTheColdStartWindowAreNotIdle() {
+    assertThat(history.predictedIdle(at(SAT_MIDNIGHT.plusHours(12)))).isEqualTo(Duration.ZERO);
+    assertThat(history.predictedIdle(at(SAT_MIDNIGHT.plusHours(21).plusMinutes(50))))
+        .isEqualTo(Duration.ZERO);
+  }
+
+  @Test
+  void unknownSlotsInsideTheDefaultColdStartWindowAreIdle() {
+    // default window 22:00-07:00 local: from the 03:00 slot up to 07:00
+    assertThat(history.predictedIdle(at(SAT_MIDNIGHT.plusHours(3).plusMinutes(5))))
+        .isEqualTo(Duration.ofHours(4));
+    // from 22:00 across midnight up to 07:00 next morning
+    assertThat(history.predictedIdle(at(SAT_MIDNIGHT.plusHours(22)))).isEqualTo(Duration.ofHours(9));
+  }
+
+  @Test
+  void coldStartWindowIsConfigurable() throws SQLException {
+    var db = Database.connect(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+    var custom = new ActivityHistory(db, ZONE, TimeWindow.parse("01:00-02:30"));
+    assertThat(custom.predictedIdle(at(SAT_MIDNIGHT.plusHours(1)))).isEqualTo(Duration.ofMinutes(90));
+    assertThat(custom.predictedIdle(at(SAT_MIDNIGHT.plusHours(3)))).isEqualTo(Duration.ZERO);
+  }
+
+  @Test
+  void knownBusySlotsInsideTheWindowAreNotIdle() {
+    // 7 weeks of samples, idle only 01:00-02:00: known active slots override the window
+    seed(SAT_MIDNIGHT.plusHours(1), SAT_MIDNIGHT.plusHours(2));
+    assertThat(history.predictedIdle(at(SAT_MIDNIGHT.plusHours(1)))).isEqualTo(Duration.ofHours(1));
     assertThat(history.predictedIdle(at(SAT_MIDNIGHT.plusHours(3)))).isEqualTo(Duration.ZERO);
   }
 

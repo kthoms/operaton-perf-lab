@@ -157,4 +157,28 @@ class IdleGateTest {
     p.idleProbeFails = true;
     assertThat(g.userActive()).isFalse();
   }
+
+  @Test
+  void manualJobSkipsOnlyThePredictedIdleCheck() {
+    var g = gate(new FakeProbe(), Duration.ZERO);
+    assertThat(g.mayStart(Duration.ofMinutes(90), NOW, false).ok()).isFalse();
+    assertThat(g.mayStart(Duration.ofMinutes(90), NOW, true).ok()).isTrue();
+  }
+
+  @Test
+  void manualJobStillNeedsAnIdleUserAndAMachineAtRest() {
+    var p = new FakeProbe();
+    p.idle = Duration.ofMinutes(2);
+    assertThat(gate(p, Duration.ZERO).mayStart(Duration.ofMinutes(1), NOW, true).reason())
+        .isEqualTo("user active 2m < 15m");
+    p.idle = Duration.ofHours(1);
+    p.load = 9.0;
+    assertThat(gate(p, Duration.ZERO).mayStart(Duration.ofMinutes(1), NOW, true).ok()).isFalse();
+    p.load = 0.5;
+    p.ac = false;
+    assertThat(gate(p, Duration.ZERO).mayStart(Duration.ofMinutes(1), NOW, true).ok()).isFalse();
+    p.ac = true;
+    p.heavy = List.of("java");
+    assertThat(gate(p, Duration.ZERO).mayStart(Duration.ofMinutes(1), NOW, true).ok()).isFalse();
+  }
 }

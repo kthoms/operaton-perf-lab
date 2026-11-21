@@ -1,5 +1,7 @@
 package io.github.kthoms.perflab.idle;
 
+import io.github.kthoms.perflab.config.PerfLabConfig.IdleConfig;
+import io.github.kthoms.perflab.config.TimeWindow;
 import io.github.kthoms.perflab.db.Database;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -8,11 +10,17 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import javax.sql.DataSource;
 
-/** Records activity samples and predicts, from the last 8 weeks, how long the Mac stays idle. */
+/**
+ * Records activity samples and predicts, from the last 8 weeks, how long the Mac stays idle. A
+ * 15-minute slot of the week with fewer than 4 samples is unknown: it counts as idle when its local
+ * start time lies in the cold-start window (default 22:00-07:00), otherwise as 50% active, so a fresh
+ * install can run its first jobs at night.
+ */
 public class ActivityHistory {
 
   static final int SLOTS_PER_WEEK = 672;
@@ -23,14 +31,24 @@ public class ActivityHistory {
 
   private final DataSource ds;
   private final ZoneId zone;
+  private final TimeWindow coldStartWindow;
 
   public ActivityHistory(Database db) {
     this(db, ZoneId.systemDefault());
   }
 
   public ActivityHistory(Database db, ZoneId zone) {
+    this(db, zone, IdleConfig.DEFAULT_COLD_START_WINDOW);
+  }
+
+  public ActivityHistory(Database db, TimeWindow coldStartWindow) {
+    this(db, ZoneId.systemDefault(), coldStartWindow);
+  }
+
+  public ActivityHistory(Database db, ZoneId zone, TimeWindow coldStartWindow) {
     this.ds = db == null ? null : db.dataSource();
     this.zone = zone;
+    this.coldStartWindow = coldStartWindow;
   }
 
   public void record(Instant ts, Duration userIdle, double load1) {
@@ -76,13 +94,24 @@ public class ActivityHistory {
     int idleSlots = 0;
     while (idleSlots < SLOTS_PER_WEEK) {
       int s = (start + idleSlots) % SLOTS_PER_WEEK;
-      double pActive = total[s] < MIN_SAMPLES ? 0.5 : (double) active[s] / total[s];
+      double pActive;
+      if (total[s] >= MIN_SAMPLES) {
+        pActive = (double) active[s] / total[s];
+      } else {
+        pActive = coldStartWindow.contains(startOf(s)) ? 0.0 : 0.5;
+      }
       if (pActive >= IDLE_BELOW_P_ACTIVE) {
         break;
       }
       idleSlots++;
     }
     return SLOT.multipliedBy(idleSlots);
+  }
+
+  /** Local start time of a slot of the week. */
+  private static LocalTime startOf(int slot) {
+    int ofDay = slot % 96;
+    return LocalTime.of(ofDay / 4, (ofDay % 4) * 15);
   }
 
   int slotOf(Instant ts) {

@@ -127,15 +127,17 @@ class StatusReport {
   private void idle(StringBuilder out, List<Job> queued, Instant now) {
     out.append("Idle decision");
     Duration expected = Duration.ZERO;
+    boolean manual = false;
     if (queued.isEmpty()) {
       out.append(" (no queued job, machine state only)");
     } else {
       Job first = queued.get(0);
       expected = estimator.expected(first);
+      manual = first.priority() == Job.PRIORITY_MANUAL;
       out.append(" for job #").append(first.id()).append(" (expected ").append(fmt(expected)).append(')');
     }
     out.append(":\n");
-    IdleGate.Decision d = gate.mayStart(expected, now);
+    IdleGate.Decision d = gate.mayStart(expected, now, manual);
     out.append("  ").append(d.ok() ? "may start now" : "would not start").append(": ")
         .append(d.reason()).append('\n');
   }

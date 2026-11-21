@@ -61,7 +61,7 @@ final class DaemonWiring {
           var jobs = new JobRepository(db.dataSource());
           var results = new ResultRepository(db.dataSource());
           var probe = new MacActivityProbe(config.idle().heavyProcessNames());
-          var history = new ActivityHistory(db);
+          var history = new ActivityHistory(db, config.idle().coldStartWindow());
           return new Daemon.Services(
               jobs,
               results,

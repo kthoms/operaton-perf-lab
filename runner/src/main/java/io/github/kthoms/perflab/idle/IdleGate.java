@@ -25,7 +25,16 @@ public class IdleGate {
     this.config = config;
   }
 
+  /** Gate for a scheduled job: all checks including the predicted idle time. */
   public Decision mayStart(Duration expected, Instant now) {
+    return mayStart(expected, now, false);
+  }
+
+  /**
+   * {@code manual}: a job the owner enqueued by hand; it skips only the predicted-idle check (the
+   * owner asked for it), never the current idle time, load, power or heavy-process checks.
+   */
+  public Decision mayStart(Duration expected, Instant now, boolean manual) {
     Optional<Duration> probed = probe.userIdle();
     if (probed.isEmpty()) {
       return no("user idle probe failed");
@@ -45,6 +54,9 @@ public class IdleGate {
     List<String> heavy = probe.heavyForeignProcesses();
     if (!heavy.isEmpty()) {
       return no("heavy process running: " + String.join(", ", heavy));
+    }
+    if (manual) {
+      return new Decision(true, "ok (manual job, prediction skipped)");
     }
     Duration predicted = history.predictedIdle(now);
     if (predicted.compareTo(expected) < 0) {

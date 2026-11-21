@@ -34,12 +34,35 @@ public record PerfLabConfig(
 
     public record BenchmarkConfig(String id, List<String> databases, List<String> branches, int repetitions) {}
 
+    /**
+     * {@code coldStartWindow} (optional, default {@link #DEFAULT_COLD_START_WINDOW}): local times at
+     * which a slot without enough activity history is predicted idle.
+     */
     public record IdleConfig(
             Duration minUserIdle,
             double maxLoad1,
             List<String> heavyProcessNames,
             Duration pollInterval,
-            Duration activityCheckInterval) {}
+            Duration activityCheckInterval,
+            TimeWindow coldStartWindow) {
+
+        public static final TimeWindow DEFAULT_COLD_START_WINDOW = TimeWindow.parse("22:00-07:00");
+
+        public IdleConfig {
+            if (coldStartWindow == null) {
+                coldStartWindow = DEFAULT_COLD_START_WINDOW;
+            }
+        }
+
+        public IdleConfig(
+                Duration minUserIdle,
+                double maxLoad1,
+                List<String> heavyProcessNames,
+                Duration pollInterval,
+                Duration activityCheckInterval) {
+            this(minUserIdle, maxLoad1, heavyProcessNames, pollInterval, activityCheckInterval, null);
+        }
+    }
 
     public Path mavenRepo() {
         return dataDir.resolve("m2");

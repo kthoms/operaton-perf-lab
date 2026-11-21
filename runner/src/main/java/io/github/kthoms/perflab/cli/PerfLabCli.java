@@ -194,7 +194,7 @@ public class PerfLabCli implements Runnable {
       Database db = connect(cfg);
       var results = new ResultRepository(db.dataSource());
       var gate = new IdleGate(
-          new MacActivityProbe(cfg.idle().heavyProcessNames()), new ActivityHistory(db), cfg.idle());
+          new MacActivityProbe(cfg.idle().heavyProcessNames()), new ActivityHistory(db, cfg.idle().coldStartWindow()), cfg.idle());
       var report = new StatusReport(
           cfg,
           db.dataSource(),

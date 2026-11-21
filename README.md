@@ -26,6 +26,19 @@ it on every start from its own environment (if unset it leaves the password unch
 script (`ops/install-launchd.sh`) renders it from `infra/.env` into the plist (no entry if the key is absent). After changing it, re-run the
 install script and `docker compose ... up -d`.
 
+## When jobs start (idle gate)
+
+A job starts only while the owner has been idle for `idle.minUserIdle`, the 1-minute load is at most
+`idle.maxLoad1`, the Mac is on AC power and no heavy foreign process runs. Scheduled jobs also need
+the predicted idle time (from 8 weeks of activity samples in 15-minute slots of the week) to cover
+their expected duration.
+
+- Manual jobs (`perflab enqueue ...`, priority 0) skip only the prediction; all other checks stay.
+- Cold start: a slot with fewer than 4 samples counts as idle when its local start time lies in
+  `idle.coldStartWindow` (optional, `"HH:mm-HH:mm"`, may wrap midnight, default `"22:00-07:00"`),
+  otherwise as 50% active (never idle). So a fresh install runs its first scheduled jobs at night
+  instead of waiting about a week for history.
+
 ## Tests
 
 Integration tests (`*IT`) use Testcontainers (`postgres:17`) and run in `mvn verify`.
