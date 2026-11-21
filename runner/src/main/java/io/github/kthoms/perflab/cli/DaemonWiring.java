@@ -9,12 +9,14 @@ import io.github.kthoms.perflab.env.FingerprintCollector;
 import io.github.kthoms.perflab.exec.ProcessRunner;
 import io.github.kthoms.perflab.git.OperatonCheckout;
 import io.github.kthoms.perflab.idle.ActivityHistory;
+import io.github.kthoms.perflab.idle.ActivityProbe;
 import io.github.kthoms.perflab.idle.IdleGate;
 import io.github.kthoms.perflab.idle.MacActivityProbe;
 import io.github.kthoms.perflab.jobs.BenchmarkJobExecutor;
 import io.github.kthoms.perflab.jobs.BuildJobExecutor;
 import io.github.kthoms.perflab.jobs.CommitResolver;
 import io.github.kthoms.perflab.jobs.DurationEstimator;
+import io.github.kthoms.perflab.jobs.JobExecutor;
 import io.github.kthoms.perflab.jobs.JobKind;
 import io.github.kthoms.perflab.jobs.JobRepository;
 import io.github.kthoms.perflab.jobs.Scheduler;
@@ -29,11 +31,19 @@ import javax.sql.DataSource;
 /** Builds the real daemon from its collaborators. */
 final class DaemonWiring {
 
+  /**
+   * The parts a test replaces: the executors (and with them checkout, git and Maven), the activity
+   * probe, the clock and the sleeper. Everything else is wired as in production.
+   */
+  record Overrides(
+      Map<JobKind, JobExecutor> executors,
+      ActivityProbe probe,
+      Clock clock,
+      Daemon.Sleeper sleeper) {}
+
   private DaemonWiring() {}
 
   static Daemon create(PerfLabConfig config, Path composeFile) {
-    var dataSource = new AtomicReference<DataSource>();
-    var database = new AtomicReference<Database>();
     var runner = new ProcessRunner();
     var checkout = new OperatonCheckout(config.checkout(), config.upstreamUrl(), runner);
     var resolver = new CommitResolver(checkout, config.branches());
@@ -45,6 +55,19 @@ final class DaemonWiring {
     var benchmarkExecutor =
         new BenchmarkJobExecutor(
             config, perfLabHome, checkout, resolver, runner, fingerprints, Clock.systemUTC());
+    return create(
+        config,
+        composeFile,
+        new Overrides(
+            Map.of(JobKind.BUILD, buildExecutor, JobKind.BENCHMARK, benchmarkExecutor),
+            new MacActivityProbe(config.idle().heavyProcessNames()),
+            Clock.systemUTC(),
+            d -> Thread.sleep(d)));
+  }
+
+  static Daemon create(PerfLabConfig config, Path composeFile, Overrides parts) {
+    var dataSource = new AtomicReference<DataSource>();
+    var database = new AtomicReference<Database>();
     // idle hooks only run after connect() succeeded, so the data source is set by then
     var backup = new Backup(config, composeFile, dataSource::get);
 
@@ -60,7 +83,7 @@ final class DaemonWiring {
           database.set(db);
           var jobs = new JobRepository(db.dataSource());
           var results = new ResultRepository(db.dataSource());
-          var probe = new MacActivityProbe(config.idle().heavyProcessNames());
+          var probe = parts.probe();
           var history = new ActivityHistory(db, config.idle().coldStartWindow());
           return new Daemon.Services(
               jobs,
@@ -70,10 +93,12 @@ final class DaemonWiring {
               new IdleGate(probe, history, config.idle()),
               new DurationEstimator(results),
               new Scheduler(jobs, results, config),
-              Map.of(JobKind.BUILD, buildExecutor, JobKind.BENCHMARK, benchmarkExecutor));
+              parts.executors());
         },
         // after-run hooks only run after connect() succeeded, so the database is set by then
         List.of(runId -> new RegressionDetector(database.get()).analyze(runId)),
-        List.of(backup));
+        List.of(backup),
+        parts.clock(),
+        parts.sleeper());
   }
 }
