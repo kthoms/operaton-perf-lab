@@ -12,6 +12,7 @@ import java.util.Set;
  * Decides which commit a job runs and with which branch configuration. Expects a fetched clone.
  * Branch job: the tip of {@code origin/<branch>}. Commit job: the commit, if reachable from
  * upstream, with the config of a configured branch containing it (the job's branch, then main).
+ * Only an unknown branch or commit is {@link Unresolved}; any other git failure is thrown.
  */
 public class CommitResolver {
 
@@ -42,11 +43,11 @@ public class CommitResolver {
     if (config.isEmpty()) {
       return new Unresolved("branch '" + job.branch() + "' is not configured");
     }
-    try {
-      return new Resolved(checkout.resolveBranch(job.branch()), config.get());
-    } catch (IllegalStateException e) {
-      return new Unresolved("branch '" + job.branch() + "' not found upstream: " + e.getMessage());
+    // only an unknown branch is not applicable; any other git failure is thrown (infrastructure)
+    if (!checkout.hasUpstreamBranch(job.branch())) {
+      return new Unresolved("branch '" + job.branch() + "' not found upstream");
     }
+    return new Resolved(checkout.resolveBranch(job.branch()), config.get());
   }
 
   private Resolution resolveCommit(Job job) {

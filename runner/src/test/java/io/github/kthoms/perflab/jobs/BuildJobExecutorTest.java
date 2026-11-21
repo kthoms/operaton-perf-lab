@@ -3,6 +3,7 @@ package io.github.kthoms.perflab.jobs;
 import static io.github.kthoms.perflab.jobs.BuildFakes.MAIN_SHA;
 import static io.github.kthoms.perflab.jobs.BuildFakes.OTHER_SHA;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.kthoms.perflab.config.PerfLabConfig;
 import io.github.kthoms.perflab.env.FingerprintCollector;
@@ -188,6 +189,22 @@ class BuildJobExecutorTest {
     assertThat(done.run().branch()).isEqualTo("1.0");
     assertThat(runner.envs.getFirst()).containsEntry("JAVA_HOME", "/opt/jdk17");
     assertThat(runner.commands.getFirst()).contains("clean", "install").doesNotContain("-Pfast");
+  }
+
+  @Test
+  void branchMissingUpstreamIsNotApplicable() {
+    checkout.branchTips.remove("main");
+    Outcome outcome = executor.execute(branchJob("main"), NEVER);
+    assertThat(outcome).isInstanceOf(NotApplicable.class);
+    assertThat(((NotApplicable) outcome).reason()).contains("main").contains("not found upstream");
+  }
+
+  @Test
+  void otherGitFailureWhileResolvingABranchIsAnInfrastructureFailure() {
+    checkout.resolveFailure = new IllegalStateException("git rev-parse failed (see git.log)");
+    assertThatThrownBy(() -> executor.execute(branchJob("main"), NEVER))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("rev-parse");
   }
 
   @Test

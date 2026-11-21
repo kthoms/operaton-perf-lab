@@ -70,6 +70,25 @@ class OperatonCheckoutTest {
     }
 
     @Test
+    void failedFetchThrows() throws Exception {
+        var c = checkout();
+        c.ensureCloned();
+        Files.move(bare, tmp.resolve("gone.git")); // upstream unreachable
+        assertThatThrownBy(c::fetch)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("git fetch");
+    }
+
+    @Test
+    void knowsWhichBranchesExistUpstream() throws Exception {
+        var c = checkout();
+        c.ensureCloned();
+        c.fetch();
+        assertThat(c.hasUpstreamBranch("main")).isTrue();
+        assertThat(c.hasUpstreamBranch("release/9.9")).isFalse();
+    }
+
+    @Test
     void rejectsUnreachableCommit() throws Exception {
         var c = checkout();
         c.ensureCloned();

@@ -69,7 +69,17 @@ public class OperatonCheckout {
     public void fetch(CancellationToken token) {
         requireRepo(token);
         pinOrigin(token);
-        run(dir, networkTimeout, token, "git", "fetch", "--prune", "origin");
+        int code = run(dir, networkTimeout, token, "git", "fetch", "--prune", "origin");
+        if (code != 0) throw new IllegalStateException("git fetch failed with " + code + " (see " + gitLog + ")");
+    }
+
+    /** Whether {@code origin/<branch>} exists in the fetched clone; throws on any other git failure. */
+    public boolean hasUpstreamBranch(String branch) {
+        requireRepo(NEVER);
+        int code = exit(NEVER, "show-ref", "--verify", "--quiet", "refs/remotes/origin/" + branch);
+        if (code == 0) return true;
+        if (code == 1) return false;
+        throw new IllegalStateException("git show-ref origin/" + branch + " failed with " + code + " (see " + gitLog + ")");
     }
 
     /** Whether the working copy has been cloned; touches nothing on disk. */

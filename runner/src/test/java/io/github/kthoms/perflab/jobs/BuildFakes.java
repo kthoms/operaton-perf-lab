@@ -61,6 +61,8 @@ public final class BuildFakes {
     public final List<String> checkedOut = new ArrayList<>();
     public final List<CancellationToken> tokens = new ArrayList<>();
     public RuntimeException checkoutFailure;
+    /** Thrown by resolveBranch for a branch that exists (a git failure, not an unknown branch). */
+    public RuntimeException resolveFailure;
     private final Path dir;
 
     public FakeCheckout(Path dir) {
@@ -84,7 +86,15 @@ public final class BuildFakes {
     }
 
     @Override
+    public boolean hasUpstreamBranch(String branch) {
+      return branchTips.containsKey(branch);
+    }
+
+    @Override
     public String resolveBranch(String branch) {
+      if (resolveFailure != null) {
+        throw resolveFailure;
+      }
       String sha = branchTips.get(branch);
       if (sha == null) {
         throw new IllegalStateException("git rev-parse origin/" + branch + " failed");
