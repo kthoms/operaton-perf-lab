@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.kthoms.perflab.config.PerfLabConfig;
 import io.github.kthoms.perflab.config.PerfLabConfig.BranchConfig;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,15 +24,16 @@ import java.util.regex.Pattern;
  */
 public class FingerprintCollector {
 
+  static final Duration PROBE_TIMEOUT = Duration.ofSeconds(30);
   static final String UNKNOWN = "unknown";
   private static final ObjectMapper JSON = new ObjectMapper();
-  private static final Pattern QUOTED = Pattern.compile("\"([^\"]+)\"");
+  private static final Pattern JAVA_VERSION = Pattern.compile("version \"([^\"]+)\"");
   private static final Pattern DIGITS = Pattern.compile("(\\d+)");
 
   private final Function<List<String>, String> exec;
 
   public FingerprintCollector() {
-    this(FingerprintCollector::run);
+    this(cmd -> run(cmd, PROBE_TIMEOUT));
   }
 
   /** The executor returns stdout (and stderr) of the command or throws on failure. */
@@ -48,7 +52,7 @@ public class FingerprintCollector {
     stable.put(
         "os.version", probe(() -> firstLine(exec.apply(List.of("sw_vers", "-productVersion")))));
     stable.put("java.version", probe(() -> javaVersion(branch)));
-    stable.put("maven.version", probe(() -> firstLine(exec.apply(List.of("mvn", "-v")))));
+    stable.put("maven.version", probe(this::mavenVersion));
     JsonNode colima = colima();
     stable.put("colima.cpus", probe(() -> colima.get("cpus").asText()));
     stable.put("colima.memory", probe(() -> colima.get("memory").asText()));
@@ -63,11 +67,22 @@ public class FingerprintCollector {
 
   private String javaVersion(BranchConfig branch) {
     String out = exec.apply(List.of(branch.javaHome().resolve("bin/java").toString(), "-version"));
-    Matcher m = QUOTED.matcher(firstLine(out));
-    if (!m.find()) {
-      throw new IllegalStateException("no java version in: " + out);
+    for (String line : out.split("\\R")) {
+      Matcher m = JAVA_VERSION.matcher(line);
+      if (m.find()) {
+        return m.group(1);
+      }
     }
-    return m.group(1);
+    throw new IllegalStateException("no java version in: " + out);
+  }
+
+  private String mavenVersion() {
+    for (String line : exec.apply(List.of("mvn", "-v")).split("\\R")) {
+      if (line.startsWith("Apache Maven")) {
+        return line.strip();
+      }
+    }
+    throw new IllegalStateException("no maven version");
   }
 
   private JsonNode colima() {
@@ -118,23 +133,36 @@ public class FingerprintCollector {
     }
   }
 
-  private static String run(List<String> cmd) {
+  static String run(List<String> cmd, Duration timeout) {
+    Path out = null;
     try {
-      Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-      String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-      if (!p.waitFor(30, TimeUnit.SECONDS)) {
+      out = Files.createTempFile("perflab-probe", ".out");
+      Process p =
+          new ProcessBuilder(cmd)
+              .redirectErrorStream(true)
+              .redirectOutput(out.toFile())
+              .start();
+      if (!p.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
         p.destroyForcibly();
         throw new IllegalStateException("timeout: " + cmd);
       }
       if (p.exitValue() != 0) {
         throw new IllegalStateException("exit " + p.exitValue() + ": " + cmd);
       }
-      return out;
+      return Files.readString(out, StandardCharsets.UTF_8);
     } catch (IOException e) {
       throw new IllegalStateException("cannot run " + cmd, e);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new IllegalStateException("interrupted: " + cmd, e);
+    } finally {
+      if (out != null) {
+        try {
+          Files.deleteIfExists(out);
+        } catch (IOException ignored) {
+          // best effort
+        }
+      }
     }
   }
 }

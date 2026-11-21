@@ -1,10 +1,12 @@
 package io.github.kthoms.perflab.env;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.kthoms.perflab.config.PerfLabConfig;
 import io.github.kthoms.perflab.config.PerfLabConfig.BranchConfig;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -87,5 +89,42 @@ class FingerprintTest {
             .collect(branch(), config());
 
     assertThat(f.stable()).containsEntry("hw.model", "unknown").containsEntry("colima.cpus", "unknown");
+  }
+
+  @Test
+  void versionParsingSkipsNoiseLines() {
+    var base = exec("21.0.5", "0.10");
+    Function<List<String>, String> noisy =
+        cmd -> {
+          String j = String.join(" ", cmd);
+          if (j.endsWith("/bin/java -version"))
+            return "Picked up JAVA_TOOL_OPTIONS: -Xmx1g\n" + base.apply(cmd);
+          if (j.equals("mvn -v")) return "WARNING: something\n" + base.apply(cmd);
+          return base.apply(cmd);
+        };
+
+    var f = new FingerprintCollector(noisy).collect(branch(), config());
+
+    assertThat(f.stable())
+        .containsEntry("java.version", "21.0.5")
+        .containsEntry("maven.version", "Apache Maven 3.9.9 (abc)");
+  }
+
+  @Test
+  void hangingProbeTimesOutInsteadOfBlocking() {
+    long start = System.nanoTime();
+
+    assertThatThrownBy(
+            () -> FingerprintCollector.run(List.of("sh", "-c", "sleep 60"), Duration.ofMillis(500)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("timeout");
+    assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(10));
+
+    // and through the collector, a hanging probe degrades to "unknown"
+    var f =
+        new FingerprintCollector(
+                cmd -> FingerprintCollector.run(List.of("sh", "-c", "sleep 60"), Duration.ofMillis(200)))
+            .collect(branch(), config());
+    assertThat(f.stable()).containsEntry("hw.model", "unknown");
   }
 }
