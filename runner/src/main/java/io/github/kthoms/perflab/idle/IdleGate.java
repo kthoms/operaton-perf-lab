@@ -4,12 +4,17 @@ import io.github.kthoms.perflab.config.PerfLabConfig.IdleConfig;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Decides whether a job of the expected duration may start now. */
 public class IdleGate {
 
   public record Decision(boolean ok, String reason) {}
 
+  static final int FAILURES_BEFORE_ACTIVE = 3;
+
+  private final AtomicInteger consecutiveFailures = new AtomicInteger();
   private final ActivityProbe probe;
   private final ActivityHistory history;
   private final IdleConfig config;
@@ -21,7 +26,11 @@ public class IdleGate {
   }
 
   public Decision mayStart(Duration expected, Instant now) {
-    Duration idle = probe.userIdle();
+    Optional<Duration> probed = probe.userIdle();
+    if (probed.isEmpty()) {
+      return no("user idle probe failed");
+    }
+    Duration idle = probed.get();
     if (idle.compareTo(config.minUserIdle()) < 0) {
       return no("user active " + fmt(idle) + " < " + fmt(config.minUserIdle()));
     }
@@ -43,9 +52,17 @@ public class IdleGate {
     return new Decision(true, "ok");
   }
 
-  /** True when the user is back; used by the cancel watchdog. */
+  /**
+   * True when the user is back; used by the cancel watchdog. A failed probe counts as activity only
+   * after {@value #FAILURES_BEFORE_ACTIVE} consecutive failures, so one glitch does not cancel a job.
+   */
   public boolean userActive() {
-    return probe.userIdle().compareTo(config.activityCheckInterval().multipliedBy(2)) < 0;
+    Optional<Duration> idle = probe.userIdle();
+    if (idle.isEmpty()) {
+      return consecutiveFailures.incrementAndGet() >= FAILURES_BEFORE_ACTIVE;
+    }
+    consecutiveFailures.set(0);
+    return idle.get().compareTo(config.activityCheckInterval().multipliedBy(2)) < 0;
   }
 
   private static Decision no(String reason) {

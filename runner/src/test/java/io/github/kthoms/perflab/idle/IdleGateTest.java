@@ -6,6 +6,7 @@ import io.github.kthoms.perflab.config.PerfLabConfig.IdleConfig;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class IdleGateTest {
@@ -21,12 +22,13 @@ class IdleGateTest {
 
   static class FakeProbe implements ActivityProbe {
     Duration idle = Duration.ofHours(1);
+    boolean idleProbeFails = false;
     double load = 0.5;
     boolean ac = true;
     List<String> heavy = List.of();
 
-    public Duration userIdle() {
-      return idle;
+    public Optional<Duration> userIdle() {
+      return idleProbeFails ? Optional.empty() : Optional.of(idle);
     }
 
     public double load1() {
@@ -109,5 +111,37 @@ class IdleGateTest {
     assertThat(gate(p, Duration.ZERO).userActive()).isTrue();
     p.idle = Duration.ofSeconds(60);
     assertThat(gate(p, Duration.ZERO).userActive()).isFalse();
+  }
+
+  @Test
+  void singleProbeFailureDoesNotCountAsActive() {
+    var p = new FakeProbe();
+    var g = gate(p, Duration.ZERO);
+    p.idleProbeFails = true;
+    assertThat(g.userActive()).isFalse();
+    assertThat(g.userActive()).isFalse();
+    p.idleProbeFails = false;
+    assertThat(g.userActive()).isFalse();
+    p.idleProbeFails = true; // counter was reset by the success
+    assertThat(g.userActive()).isFalse();
+  }
+
+  @Test
+  void threeConsecutiveFailuresCountAsActive() {
+    var p = new FakeProbe();
+    p.idleProbeFails = true;
+    var g = gate(p, Duration.ZERO);
+    assertThat(g.userActive()).isFalse();
+    assertThat(g.userActive()).isFalse();
+    assertThat(g.userActive()).isTrue();
+  }
+
+  @Test
+  void probeFailureClosesGate() {
+    var p = new FakeProbe();
+    p.idleProbeFails = true;
+    var d = gate(p, Duration.ofHours(3)).mayStart(Duration.ofMinutes(1), NOW);
+    assertThat(d.ok()).isFalse();
+    assertThat(d.reason()).isEqualTo("user idle probe failed");
   }
 }

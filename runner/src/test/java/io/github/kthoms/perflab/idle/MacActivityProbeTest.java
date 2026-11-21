@@ -48,4 +48,49 @@ class MacActivityProbeTest {
     var found = MacActivityProbe.parseHeavyForeign(ps, Set.of("java", "com.docker.backend"), 100);
     assertThat(found).containsExactly("com.docker.backend", "java");
   }
+
+  @Test
+  void logsProbeFailureOnlyOnStateTransitions() {
+    var messages = new java.util.ArrayList<String>();
+    System.Logger rec =
+        new System.Logger() {
+          public String getName() {
+            return "rec";
+          }
+
+          public boolean isLoggable(Level level) {
+            return true;
+          }
+
+          public void log(Level level, java.util.ResourceBundle b, String msg, Throwable t) {
+            messages.add(level + " " + msg);
+          }
+
+          public void log(Level level, java.util.ResourceBundle b, String fmt, Object... params) {
+            messages.add(level + " " + java.text.MessageFormat.format(fmt, params));
+          }
+        };
+    boolean[] broken = {true};
+    var probe =
+        new MacActivityProbe(
+            java.util.List.of(),
+            cmd -> {
+              if (broken[0]) {
+                throw new IllegalStateException("boom");
+              }
+              return "    | | | \"HIDIdleTime\" = 1000000000\n";
+            },
+            rec);
+
+    assertThat(probe.userIdle()).isEmpty();
+    assertThat(probe.userIdle()).isEmpty();
+    assertThat(messages).hasSize(1);
+    assertThat(messages.get(0)).startsWith("WARNING").contains("ioreg").contains("boom");
+
+    broken[0] = false;
+    assertThat(probe.userIdle()).contains(Duration.ofSeconds(1));
+    assertThat(probe.userIdle()).contains(Duration.ofSeconds(1));
+    assertThat(messages).hasSize(2);
+    assertThat(messages.get(1)).isEqualTo("INFO probe ioreg recovered");
+  }
 }
