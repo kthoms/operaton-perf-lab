@@ -20,11 +20,14 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +38,7 @@ class BenchmarkJobExecutorTest {
   private static final Instant T0 = Instant.parse("2026-11-21T02:00:00Z");
   private static final String VERSION = "2.3.0-SNAPSHOT";
   private static final String CONTAINER = "perflab-bench-pg-9";
+  private static final List<String> REMOVE_CONTAINER = List.of("docker", "rm", "-f", CONTAINER);
 
   @TempDir Path dataDir;
   @TempDir Path perfLabHome;
@@ -43,6 +47,9 @@ class BenchmarkJobExecutorTest {
   ScriptedRunner runner;
   MutableClock clock;
   BenchmarkJobExecutor executor;
+  /** The job's cancellation flag; the fake runner can raise it while a command "runs". */
+  final AtomicBoolean cancelled = new AtomicBoolean();
+  final CancellationToken token = cancelled::get;
 
   @BeforeEach
   void setUp() throws IOException {
@@ -81,6 +88,10 @@ class BenchmarkJobExecutorTest {
         readinessTimeout);
   }
 
+  private static Job job(String db) {
+    return job("task-authorization", db);
+  }
+
   private static Job job(String benchmark, String db) {
     return new Job(9, JobKind.BENCHMARK, "main", null, benchmark, db, Job.PRIORITY_BENCHMARK, JobStatus.RUNNING, 1);
   }
@@ -89,9 +100,13 @@ class BenchmarkJobExecutorTest {
     return cmd -> cmd.contains(arg);
   }
 
+  private static boolean isDocker(List<String> cmd) {
+    return cmd.getFirst().equals("docker");
+  }
+
   @Test
-  void h2RunPreparesEngineCompilesBenchmarkAndRepeats() {
-    Outcome outcome = executor.execute(job("task-authorization", "h2"), () -> false);
+  void h2RunPreparesEngineResolvesCompilesOfflineAndRepeats() {
+    Outcome outcome = executor.execute(job("h2"), token);
 
     assertThat(outcome).isInstanceOf(Completed.class);
     Completed done = (Completed) outcome;
@@ -101,15 +116,21 @@ class BenchmarkJobExecutorTest {
     assertThat(runner.commands.get(0))
         .containsExactly(mvnw, "install", "-DskipTests", "-Pdistro", "-Dskip.frontend.build=true",
             "-pl", "engine", "-am", repo);
-    assertThat(runner.commands.get(1)).startsWith(mvnw).contains("help:evaluate", "-Dexpression=project.version", repo);
+    assertThat(runner.commands.get(1))
+        .startsWith(mvnw)
+        .contains("help:evaluate", "-Dexpression=project.version", "-q", "-DforceStdout", repo)
+        .anyMatch(a -> a.startsWith("-Doutput="));
     assertThat(runner.commands.get(2))
         .startsWith("mvn")
-        .contains("-f", pom, repo, "-Doperaton.version=" + VERSION, "compile");
-    assertThat(runner.commands.subList(3, 5))
+        .contains("-f", pom, repo, "-Doperaton.version=" + VERSION, "dependency:resolve", "dependency:resolve-plugins")
+        .doesNotContain("-o");
+    assertThat(runner.commands.get(3)).contains("-f", pom, "-o", "-Doperaton.version=" + VERSION, "compile");
+    assertThat(runner.commands.subList(4, 6))
         .allSatisfy(cmd -> assertThat(cmd)
-            .contains("-f", pom, repo, "-Doperaton.version=" + VERSION, "-Dbenchmark.database=h2", "exec:exec"));
-    assertThat(runner.commands).hasSize(5).noneMatch(cmd -> cmd.getFirst().equals("docker"));
+            .contains("-f", pom, "-o", repo, "-Doperaton.version=" + VERSION, "-Dbenchmark.database=h2", "exec:exec"));
+    assertThat(runner.commands).hasSize(6).noneMatch(BenchmarkJobExecutorTest::isDocker);
     assertThat(runner.envs).allSatisfy(env -> assertThat(env).containsEntry("JAVA_HOME", "/opt/jdk21"));
+    assertThat(runner.tokens).allMatch(t -> t == token);
     assertThat(checkout.checkedOut).containsExactly(MAIN_SHA);
 
     assertThat(done.run().kind()).isEqualTo(JobKind.BENCHMARK);
@@ -125,62 +146,161 @@ class BenchmarkJobExecutorTest {
             new Measurement("benchmark.median.duration", 2.0, "ms",
                 Map.of("benchmark", "task-authorization", "repetition", "2")),
             new Measurement("benchmark.iteration.duration", 3.0, "ms",
-                Map.of("benchmark", "task-authorization", "iteration", "3", "repetition", "2")))
-        .hasSize(8);
+                Map.of("benchmark", "task-authorization", "iteration", "3", "repetition", "2")),
+            new Measurement("benchmark.operation.median.duration", 1.0, "ms",
+                Map.of("benchmark", "task-authorization", "operation", "count", "repetition", "1")))
+        .hasSize(12); // per repetition: 3 iterations, median, 2 operation medians
   }
 
   @Test
-  void compileFailureIsNotApplicable() {
+  void compilationErrorIsNotApplicable() {
     runner.exitCodes.put("compile", 1);
+    runner.logOutput.put("compile", "[ERROR] COMPILATION ERROR : \n[ERROR] Foo.java:[3,1] cannot find symbol\n");
 
-    Outcome outcome = executor.execute(job("task-authorization", "postgresql"), () -> false);
+    Outcome outcome = executor.execute(job("postgresql"), token);
 
     assertThat(outcome).isInstanceOf(NotApplicable.class);
     assertThat(((NotApplicable) outcome).reason()).contains("compile").contains(VERSION);
-    assertThat(runner.commands).noneMatch(has("exec:exec")).noneMatch(cmd -> cmd.getFirst().equals("docker"));
+    assertThat(runner.commands).noneMatch(has("exec:exec")).noneMatch(BenchmarkJobExecutorTest::isDocker);
   }
 
   @Test
-  void prepFailureYieldsFailedRunWithoutMeasurements() {
+  void compileStepFailureWithoutCompilationErrorIsAnInfrastructureFailure() {
+    runner.exitCodes.put("compile", 1);
+    runner.logOutput.put("compile", "[ERROR] Failed to execute goal ... Cannot access central in offline mode\n");
+
+    assertThatThrownBy(() -> executor.execute(job("h2"), token))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("compile");
+  }
+
+  @Test
+  void compilationErrorInEarlierLogOutputDoesNotCount() {
+    // e.g. the engine build logged the marker; only the compile step's own output is inspected
+    runner.logOutput.put("install", "[WARNING] test output mentioning COMPILATION ERROR\n");
+    runner.exitCodes.put("compile", 1);
+
+    assertThatThrownBy(() -> executor.execute(job("h2"), token)).isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void dependencyResolutionFailureIsAnInfrastructureFailure() {
+    runner.exitCodes.put("dependency:resolve", 1);
+
+    assertThatThrownBy(() -> executor.execute(job("h2"), token))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("resolve");
+    assertThat(runner.commands).noneMatch(has("compile"));
+  }
+
+  @Test
+  void prepFailureIsAnInfrastructureFailure() {
     runner.exitCodes.put("install", 1);
 
-    Completed done = (Completed) executor.execute(job("task-authorization", "h2"), () -> false);
-
-    assertThat(done.run().status()).isEqualTo("FAILED");
-    assertThat(done.measurements()).isEmpty();
+    assertThatThrownBy(() -> executor.execute(job("h2"), token))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("install");
     assertThat(runner.commands).hasSize(1);
+  }
+
+  @Test
+  void unreadableVersionIsAnInfrastructureFailure() {
+    runner.version = "[ERROR] no pom";
+
+    assertThatThrownBy(() -> executor.execute(job("h2"), token))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("version");
+  }
+
+  @Test
+  void sweepsLeftoverBenchmarkContainersBeforeStartingPostgres() {
+    runner.psOutput =
+        "aaa111\tperflab-bench-pg-3\tbench-pg\n"
+            + "bbb222\told-name\tbench-pg\n"
+            + "ccc333\tperflab-bench-pg-7\t\n"
+            + "ddd444\tperflab-t11-results-db-1\t\n";
+
+    executor.execute(job("postgresql"), token);
+
+    int ps = indexOf(cmd -> cmd.size() > 1 && cmd.get(1).equals("ps"));
+    int sweep = indexOf(cmd -> cmd.equals(List.of("docker", "rm", "-f", "aaa111", "bbb222", "ccc333")));
+    int run = indexOf(cmd -> cmd.size() > 1 && cmd.get(1).equals("run"));
+    assertThat(ps).isNotNegative().isLessThan(sweep);
+    assertThat(sweep).isLessThan(run);
+    assertThat(runner.commands.get(ps)).contains("-a", "--format");
+    assertThat(runner.commands.get(run))
+        .startsWith("docker", "run", "--rm", "-d", "--name", CONTAINER,
+            "--label", "io.github.kthoms.perflab=bench-pg", "-p", "127.0.0.1:5434:5432")
+        .contains("postgres:17");
+    assertThat(runner.commands.getLast()).isEqualTo(REMOVE_CONTAINER);
+  }
+
+  @Test
+  void noSweepWhenNoLeftoverContainers() {
+    executor.execute(job("postgresql"), token);
+
+    assertThat(runner.commands)
+        .filteredOn(cmd -> cmd.size() > 1 && cmd.get(1).equals("rm"))
+        .containsExactly(REMOVE_CONTAINER);
+  }
+
+  @Test
+  void failingContainerListingIsAnInfrastructureFailure() {
+    runner.exitCodes.put("ps", 1);
+
+    assertThatThrownBy(() -> executor.execute(job("postgresql"), token))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(runner.commands).noneMatch(cmd -> cmd.size() > 1 && cmd.get(1).equals("run"));
   }
 
   @Test
   void postgresContainerRemovedOnCancel() {
     runner.cancelOn = "exec:exec";
-    CancellationToken token = () -> false;
 
-    Outcome outcome = executor.execute(job("task-authorization", "postgresql"), token);
+    Outcome outcome = executor.execute(job("postgresql"), token);
 
     assertThat(outcome).isInstanceOf(Cancelled.class);
-    List<String> run =
-        runner.commands.stream().filter(cmd -> cmd.size() > 1 && cmd.get(1).equals("run")).findFirst().orElseThrow();
-    assertThat(run)
-        .startsWith("docker", "run", "--rm", "-d", "--name", CONTAINER, "-p", "127.0.0.1:5434:5432")
-        .contains("postgres:17");
     assertThat(runner.commands).anyMatch(cmd -> cmd.equals(List.of(
         "docker", "exec", CONTAINER, "pg_isready", "-h", "127.0.0.1", "-U", "postgres")));
     assertThat(runner.commands.stream().filter(has("exec:exec")).findFirst().orElseThrow())
         .contains("-Dbenchmark.database=postgresql", "-Dbenchmark.jdbcUrl=jdbc:postgresql://127.0.0.1:5434/postgres");
-    assertThat(runner.commands.getLast()).containsExactly("docker", "rm", "-f", CONTAINER);
+    assertThat(runner.commands.getLast()).isEqualTo(REMOVE_CONTAINER);
     // every process except the final cleanup is stopped by the job token
     assertThat(runner.tokens.subList(0, runner.tokens.size() - 1)).allMatch(t -> t == token);
+    assertThat(runner.tokens.getLast()).isNotSameAs(token);
+  }
+
+  @Test
+  void cancelByTokenDuringBenchmarkRunIsCancelledAndRemovesContainer() {
+    runner.raiseCancelOn = "exec:exec"; // the process ends normally, but the token is cancelled
+
+    Outcome outcome = executor.execute(job("postgresql"), token);
+
+    assertThat(outcome).isInstanceOf(Cancelled.class);
+    assertThat(runner.commands).filteredOn(has("exec:exec")).hasSize(1);
+    assertThat(runner.commands.getLast()).isEqualTo(REMOVE_CONTAINER);
+  }
+
+  @Test
+  void cancelDuringReadinessWaitRemovesContainer() {
+    runner.exitCodes.put("pg_isready", 2);
+    runner.raiseCancelOn = "pg_isready";
+
+    Outcome outcome = executor.execute(job("postgresql"), token);
+
+    assertThat(outcome).isInstanceOf(Cancelled.class);
+    assertThat(runner.commands).noneMatch(has("exec:exec"));
+    assertThat(runner.commands.getLast()).isEqualTo(REMOVE_CONTAINER);
   }
 
   @Test
   void postgresContainerRemovedWhenBenchmarkRunFails() {
     runner.failOn = "exec:exec";
 
-    assertThatThrownBy(() -> executor.execute(job("task-authorization", "postgresql"), () -> false))
+    assertThatThrownBy(() -> executor.execute(job("postgresql"), token))
         .isInstanceOf(UncheckedIOException.class);
 
-    assertThat(runner.commands.getLast()).containsExactly("docker", "rm", "-f", CONTAINER);
+    assertThat(runner.commands.getLast()).isEqualTo(REMOVE_CONTAINER);
   }
 
   @Test
@@ -188,29 +308,82 @@ class BenchmarkJobExecutorTest {
     runner.exitCodes.put("pg_isready", 2);
     executor = executor(Duration.ZERO);
 
-    assertThatThrownBy(() -> executor.execute(job("task-authorization", "postgresql"), () -> false))
+    assertThatThrownBy(() -> executor.execute(job("postgresql"), token))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("ready");
 
     assertThat(runner.commands).noneMatch(has("exec:exec"));
-    assertThat(runner.commands.getLast()).containsExactly("docker", "rm", "-f", CONTAINER);
+    assertThat(runner.commands.getLast()).isEqualTo(REMOVE_CONTAINER);
+  }
+
+  @Test
+  void failingBenchmarkRunIsStoredAsFailed() {
+    runner.exitCodes.put("exec:exec", 1);
+
+    Completed done = (Completed) executor.execute(job("h2"), token);
+
+    assertThat(done.run().status()).isEqualTo("FAILED");
+    assertThat(done.measurements()).isEmpty();
+  }
+
+  @Test
+  void unreadableResultIsStoredAsFailed() {
+    runner.result = "{not json";
+
+    Completed done = (Completed) executor.execute(job("postgresql"), token);
+
+    assertThat(done.run().status()).isEqualTo("FAILED");
+    assertThat(done.measurements()).isEmpty();
+    assertThat(runner.commands.getLast()).isEqualTo(REMOVE_CONTAINER);
+  }
+
+  @Test
+  void resultOfAnotherDatabaseIsAnInfrastructureFailure() {
+    runner.result =
+        "{\"benchmark\":\"task-authorization\",\"database\":\"h2\",\"params\":{},\"iterationsMs\":[1.0]}";
+
+    assertThatThrownBy(() -> executor.execute(job("postgresql"), token))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("h2");
+    assertThat(runner.commands.getLast()).isEqualTo(REMOVE_CONTAINER);
   }
 
   @Test
   void unknownBenchmarkOrDatabaseIsNotApplicable() {
-    assertThat(executor.execute(job("other", "h2"), () -> false)).isInstanceOf(NotApplicable.class);
-    assertThat(executor.execute(job("task-authorization", "oracle"), () -> false)).isInstanceOf(NotApplicable.class);
+    assertThat(executor.execute(job("other", "h2"), token)).isInstanceOf(NotApplicable.class);
+    assertThat(executor.execute(job("oracle"), token)).isInstanceOf(NotApplicable.class);
     assertThat(runner.commands).isEmpty();
   }
 
-  /** Records commands; answers help:evaluate with a version and exec:exec with a result file. */
-  static class ScriptedRunner extends ProcessRunner {
+  private int indexOf(Predicate<List<String>> p) {
+    for (int i = 0; i < runner.commands.size(); i++) {
+      if (p.test(runner.commands.get(i))) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Records commands. Answers {@code help:evaluate} with a version in its {@code -Doutput} file,
+   * {@code docker ps} with {@link #psOutput}, and {@code exec:exec} with a result file for the
+   * requested database.
+   */
+  class ScriptedRunner extends ProcessRunner {
     final List<List<String>> commands = new ArrayList<>();
     final List<Map<String, String>> envs = new ArrayList<>();
     final List<CancellationToken> tokens = new ArrayList<>();
-    /** Exit code for the first command containing the key as an argument. */
-    final Map<String, Integer> exitCodes = new java.util.HashMap<>();
+    /** Exit code for commands containing the key as an argument. */
+    final Map<String, Integer> exitCodes = new HashMap<>();
+    /** Text appended to the log for commands containing the key as an argument. */
+    final Map<String, String> logOutput = new HashMap<>();
+    String version = VERSION;
+    String psOutput = "";
+    String result;
+    /** The runner reports the process as killed by cancellation. */
     String cancelOn;
+    /** The process ends normally, but the job token is cancelled meanwhile. */
+    String raiseCancelOn;
     String failOn;
 
     @Override
@@ -225,32 +398,48 @@ class BenchmarkJobExecutorTest {
       commands.add(List.copyOf(cmd));
       envs.add(Map.copyOf(env));
       tokens.add(token);
+      Files.createDirectories(logFile.getParent());
       if (failOn != null && cmd.contains(failOn)) {
         throw new IOException("boom");
       }
       if (cancelOn != null && cmd.contains(cancelOn)) {
         return new Result(143, true, Duration.ofSeconds(1));
       }
+      if (raiseCancelOn != null && cmd.contains(raiseCancelOn)) {
+        cancelled.set(true);
+      }
+      for (var e : logOutput.entrySet()) {
+        if (cmd.contains(e.getKey())) {
+          Files.writeString(logFile, e.getValue(), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        }
+      }
       for (var e : exitCodes.entrySet()) {
         if (cmd.contains(e.getKey())) {
           return new Result(e.getValue(), false, Duration.ofSeconds(1));
         }
       }
-      Files.createDirectories(logFile.getParent());
       if (cmd.contains("help:evaluate")) {
-        Files.writeString(logFile, "Downloading wrapper...\n" + VERSION);
+        Files.writeString(Path.of(arg(cmd, "-Doutput=")), version);
+      }
+      if (cmd.size() > 1 && cmd.getFirst().equals("docker") && cmd.get(1).equals("ps")) {
+        Files.writeString(logFile, psOutput, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
       }
       if (cmd.contains("exec:exec")) {
-        String output =
-            cmd.stream().filter(a -> a.startsWith("-Dbenchmark.output=")).findFirst().orElseThrow()
-                .substring("-Dbenchmark.output=".length());
-        Files.createDirectories(Path.of(output).getParent());
+        Path output = Path.of(arg(cmd, "-Dbenchmark.output="));
+        Files.createDirectories(output.getParent());
         Files.writeString(
-            Path.of(output),
-            "{\"benchmark\":\"task-authorization\",\"database\":\"h2\",\"params\":{},"
-                + "\"iterationsMs\":[1.0,2.0,3.0]}");
+            output,
+            result != null
+                ? result
+                : "{\"benchmark\":\"task-authorization\",\"database\":\"" + arg(cmd, "-Dbenchmark.database=")
+                    + "\",\"params\":{},\"iterationsMs\":[1.0,2.0,3.0],"
+                    + "\"operationsMs\":{\"listPage\":[0.5,1.0,1.5],\"count\":[0.5,1.0,1.5]}}");
       }
       return new Result(0, false, Duration.ofSeconds(1));
+    }
+
+    private static String arg(List<String> cmd, String prefix) {
+      return cmd.stream().filter(a -> a.startsWith(prefix)).findFirst().orElseThrow().substring(prefix.length());
     }
   }
 }

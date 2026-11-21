@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.LongSupplier;
 import org.operaton.bpm.engine.AuthorizationService;
 import org.operaton.bpm.engine.ProcessEngine;
 import org.operaton.bpm.engine.ProcessEngineConfiguration;
@@ -26,8 +27,8 @@ import org.operaton.bpm.model.bpmn.BpmnModelInstance;
  * TaskAuthorizationExistsBenchmark} of operaton/operaton#3202. Starts {@code tasks} user-task
  * instances, grants TASK/READ to the user and to {@code groups} groups, enables authorization and
  * times {@code iterations} iterations after {@code warmup} untimed ones. One iteration runs the
- * three queries of the original once: {@code listPage}, {@code listPage} ordered by create time
- * desc, and {@code count}.
+ * three operations of the original once, each timed separately ({@code operationsMs}); the
+ * iteration's time ({@code iterationsMs}) is their sum.
  *
  * <p>Run as a program, it reads {@code benchmark.*} system properties and writes the JSON result
  * to {@code -Dbenchmark.output}. The schema is created on start and dropped on close, so every run
@@ -39,6 +40,8 @@ public class TaskAuthorizationBenchmark {
   static final String PROCESS_KEY = "taskAuthorizationExistsBenchmark";
   static final String USER_ID = "task-auth-benchmark-user";
   static final int PAGE_SIZE = 15;
+  /** Operation names of the original benchmark, in execution order. */
+  static final List<String> OPERATIONS = List.of("listPage", "listPageOrderedByCreateTimeDesc", "count");
 
   public record Options(
       String database,
@@ -99,16 +102,25 @@ public class TaskAuthorizationBenchmark {
           throw new IllegalStateException(
               "Expected " + options.tasks() + " visible tasks but got " + visible);
         }
+        List<LongSupplier> operations = operations(taskService);
         for (int i = 0; i < options.warmup(); i++) {
-          iteration(taskService);
+          operations.forEach(LongSupplier::getAsLong);
         }
+        Map<String, List<Double>> operationsMs = new LinkedHashMap<>();
+        OPERATIONS.forEach(name -> operationsMs.put(name, new ArrayList<>(options.iterations())));
         List<Double> iterationsMs = new ArrayList<>(options.iterations());
         for (int i = 0; i < options.iterations(); i++) {
-          long start = System.nanoTime();
-          iteration(taskService);
-          iterationsMs.add((System.nanoTime() - start) / 1_000_000d);
+          double iterationMs = 0;
+          for (int op = 0; op < OPERATIONS.size(); op++) {
+            long start = System.nanoTime();
+            operations.get(op).getAsLong();
+            double ms = (System.nanoTime() - start) / 1_000_000d;
+            operationsMs.get(OPERATIONS.get(op)).add(ms);
+            iterationMs += ms;
+          }
+          iterationsMs.add(iterationMs);
         }
-        return new BenchmarkResult(ID, options.database(), options.params(), iterationsMs);
+        return new BenchmarkResult(ID, options.database(), options.params(), iterationsMs, operationsMs);
       } finally {
         engine.getIdentityService().clearAuthentication();
       }
@@ -142,13 +154,12 @@ public class TaskAuthorizationBenchmark {
     throw new IllegalArgumentException("unsupported JDBC URL: " + jdbcUrl);
   }
 
-  /** One timed unit: the three queries of the original benchmark. */
-  private static long iteration(TaskService taskService) {
-    long observed = taskService.createTaskQuery().listPage(0, PAGE_SIZE).size();
-    observed +=
-        taskService.createTaskQuery().orderByTaskCreateTime().desc().listPage(0, PAGE_SIZE).size();
-    observed += taskService.createTaskQuery().count();
-    return observed;
+  /** The three queries of the original benchmark, in the order of {@link #OPERATIONS}. */
+  private static List<LongSupplier> operations(TaskService taskService) {
+    return List.of(
+        () -> taskService.createTaskQuery().listPage(0, PAGE_SIZE).size(),
+        () -> taskService.createTaskQuery().orderByTaskCreateTime().desc().listPage(0, PAGE_SIZE).size(),
+        () -> taskService.createTaskQuery().count());
   }
 
   private static void setupData(ProcessEngine engine, Options options) {

@@ -41,5 +41,18 @@ class TaskAuthorizationBenchmarkTest {
     assertThat(iterations.isArray()).isTrue();
     assertThat(iterations).hasSize(3);
     iterations.forEach(ms -> assertThat(ms.asDouble()).isPositive());
+    JsonNode operations = json.get("operationsMs");
+    assertThat(operations.fieldNames())
+        .toIterable()
+        .containsExactly("listPage", "listPageOrderedByCreateTimeDesc", "count");
+    for (int i = 0; i < 3; i++) {
+      double sum = 0;
+      for (JsonNode op : operations) {
+        assertThat(op).hasSize(3);
+        sum += op.get(i).asDouble();
+      }
+      // iterationsMs is the per-iteration sum of the operations (values are rounded to 3 decimals)
+      assertThat(iterations.get(i).asDouble()).isCloseTo(sum, org.assertj.core.data.Offset.offset(0.005));
+    }
   }
 }

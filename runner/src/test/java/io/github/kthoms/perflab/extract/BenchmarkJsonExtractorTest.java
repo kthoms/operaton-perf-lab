@@ -41,6 +41,42 @@ class BenchmarkJsonExtractorTest {
   }
 
   @Test
+  void extractsOperationMedians() throws Exception {
+    Path json =
+        Files.writeString(
+            dir.resolve("r.json"),
+            "{\"benchmark\":\"task-authorization\",\"database\":\"postgresql\",\"params\":{},"
+                + "\"iterationsMs\":[3.0,6.0,9.0],"
+                + "\"operationsMs\":{\"listPage\":[1.0,2.0,3.0],\"count\":[2.0,4.0,6.0]}}");
+
+    List<Measurement> measurements = BenchmarkJsonExtractor.extract(json, "task-authorization", "postgresql");
+
+    assertThat(measurements)
+        .filteredOn(m -> m.kpi().equals("benchmark.operation.median.duration"))
+        .containsExactly(
+            new Measurement("benchmark.operation.median.duration", 2.0, "ms",
+                Map.of("benchmark", "task-authorization", "operation", "listPage")),
+            new Measurement("benchmark.operation.median.duration", 4.0, "ms",
+                Map.of("benchmark", "task-authorization", "operation", "count")));
+    assertThat(measurements).filteredOn(m -> m.kpi().equals("benchmark.iteration.duration")).hasSize(3);
+  }
+
+  @Test
+  void resultOfAnotherBenchmarkOrDatabaseIsRejected() throws Exception {
+    Path json =
+        Files.writeString(
+            dir.resolve("r.json"),
+            "{\"benchmark\":\"task-authorization\",\"database\":\"h2\",\"params\":{},\"iterationsMs\":[1]}");
+
+    assertThatThrownBy(() -> BenchmarkJsonExtractor.extract(json, "task-authorization", "postgresql"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("h2");
+    assertThatThrownBy(() -> BenchmarkJsonExtractor.extract(json, "other", "h2"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("task-authorization");
+  }
+
+  @Test
   void medianOfOddCountIsTheMiddleValue() throws Exception {
     Path json =
         Files.writeString(

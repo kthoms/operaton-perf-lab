@@ -43,7 +43,7 @@ end
 $$;
 
 -- BENCHMARK runs: task-authorization on h2 and postgresql, 2 branches x 8 runs, 3 repetitions
--- of 10 iterations each. 'main' switches segment to 'seg-b' for the last 2 runs.
+-- of 10 iterations each, plus per-repetition medians of the three operations. 'main' switches segment to 'seg-b' for the last 2 runs.
 do $$
 declare
   br text; dbn text; i int; rep int; it int; j bigint; r bigint; ts timestamptz; seg text;
@@ -77,6 +77,12 @@ begin
             select r, 'benchmark.median.duration', percentile_cont(0.5) within group (order by x), 'ms',
                    jsonb_build_object('benchmark', 'task-authorization', 'repetition', rep::text)
             from unnest(vals) as x;
+          -- operation medians: the iteration splits into the three operations of the original
+          insert into measurement(run_id, kpi, value, unit, dims)
+            select r, 'benchmark.operation.median.duration',
+                   (select percentile_cont(0.5) within group (order by x) from unnest(vals) as x) * o.share, 'ms',
+                   jsonb_build_object('benchmark', 'task-authorization', 'operation', o.name, 'repetition', rep::text)
+            from (values ('listPage', 0.3), ('listPageOrderedByCreateTimeDesc', 0.45), ('count', 0.25)) as o(name, share);
         end loop;
       end loop;
     end loop;

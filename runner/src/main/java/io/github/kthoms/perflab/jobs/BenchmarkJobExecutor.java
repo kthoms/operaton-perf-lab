@@ -15,7 +15,9 @@ import io.github.kthoms.perflab.results.Measurement;
 import io.github.kthoms.perflab.results.RunRecord;
 import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -32,9 +34,11 @@ import java.util.stream.Stream;
 
 /**
  * Runs a perf-lab benchmark (module {@code benchmarks}) against one Operaton commit. Untimed prep:
- * install the engine of the checkout into the lab's Maven repo, then compile the benchmark against
- * that version (a compile failure means the benchmark does not apply). The benchmark then runs
- * {@code repetitions} times; for PostgreSQL in a fresh container per job, always removed afterwards.
+ * install the engine of the checkout into the lab's Maven repo, resolve the benchmark's
+ * dependencies for that version, and compile it offline. Only a compilation error means the
+ * benchmark does not apply; any other prep failure is an infrastructure failure (thrown, so the
+ * job is retried). The benchmark then runs {@code repetitions} times, for PostgreSQL in a fresh
+ * container per job that is always removed afterwards.
  */
 public class BenchmarkJobExecutor implements JobExecutor {
 
@@ -47,10 +51,14 @@ public class BenchmarkJobExecutor implements JobExecutor {
   static final String PG_IMAGE = "postgres:17";
   /** Throwaway credentials of a container bound to 127.0.0.1 that lives for one job. */
   static final String PG_PASSWORD = "perflab-bench";
+  static final String CONTAINER_PREFIX = "perflab-bench-pg-";
+  static final String LABEL_KEY = "io.github.kthoms.perflab";
+  static final String LABEL_VALUE = "bench-pg";
   static final Duration READINESS_TIMEOUT = Duration.ofSeconds(90);
   private static final Duration READINESS_POLL = Duration.ofSeconds(1);
   private static final Duration CLEANUP_TIMEOUT = Duration.ofMinutes(2);
   private static final Pattern VERSION = Pattern.compile("^[0-9][0-9A-Za-z._-]*$");
+  private static final String COMPILATION_ERROR = "COMPILATION ERROR";
 
   private final PerfLabConfig config;
   private final Path perfLabHome;
@@ -150,17 +158,13 @@ public class BenchmarkJobExecutor implements JobExecutor {
         job.id(), job.benchmark(), job.db(), sha, branch.name(), log);
 
     // untimed prep: install the engine under test
-    List<String> prep = new ArrayList<>(List.of(
+    List<String> prep = List.of(
         mvnw(), "install", "-DskipTests", "-Pdistro", "-Dskip.frontend.build=true", "-pl", "engine", "-am",
-        repoLocal()));
-    ProcessRunner.Result prepResult = run(prep, config.checkout(), env, log, token);
-    if (prepResult.cancelled()) {
+        repoLocal());
+    if (!succeeded(run(prep, config.checkout(), env, log, token), token, "engine install (prep)", log)) {
       return new Cancelled();
     }
-    if (prepResult.exitCode() != 0) {
-      return completed(job, branch, sha, "FAILED", started, fingerprint, String.join(" ", prep), log, List.of());
-    }
-    Optional<String> version = operatonVersion(job, sha, env, token);
+    Optional<String> version = operatonVersion(job, sha, env, log, token);
     if (version.isEmpty()) {
       return new Cancelled();
     }
@@ -170,19 +174,28 @@ public class BenchmarkJobExecutor implements JobExecutor {
     List<String> mvn = List.of(
         "mvn", "-B", "-f", pom.toString(), repoLocal(), "-Doperaton.version=" + version.get(),
         "-Dbenchmark.buildDir=" + buildDir);
-    List<String> compile = new ArrayList<>(mvn);
-    compile.add("compile");
-    ProcessRunner.Result compiled = run(compile, work, env, log, token);
-    if (compiled.cancelled()) {
+    // network and repository problems surface here, so they are never mistaken for a compile error
+    List<String> resolveCmd = with(mvn, "dependency:resolve", "dependency:resolve-plugins");
+    if (!succeeded(run(resolveCmd, work, env, log, token), token,
+        "dependency:resolve of the benchmark for Operaton " + version.get(), log)) {
+      return new Cancelled();
+    }
+    long compileOutputStart = Files.exists(log) ? Files.size(log) : 0;
+    ProcessRunner.Result compiled = run(with(mvn, "-o", "compile"), work, env, log, token);
+    if (compiled.cancelled() || token.isCancelled()) {
       return new Cancelled();
     }
     if (compiled.exitCode() != 0) {
-      return new NotApplicable(
-          "benchmark " + job.benchmark() + " does not compile against Operaton " + version.get() + " (see " + log + ")");
+      if (readFrom(log, compileOutputStart).contains(COMPILATION_ERROR)) {
+        return new NotApplicable("benchmark " + job.benchmark() + " does not compile against Operaton "
+            + version.get() + " (see " + log + ")");
+      }
+      throw new IllegalStateException("benchmark compile step failed with " + compiled.exitCode()
+          + " without a compilation error (see " + log + ")");
     }
 
     boolean postgres = POSTGRESQL.equals(job.db());
-    String container = "perflab-bench-pg-" + job.id();
+    String container = CONTAINER_PREFIX + job.id();
     try {
       if (postgres && !startPostgres(container, work, log, token)) {
         return new Cancelled();
@@ -194,6 +207,7 @@ public class BenchmarkJobExecutor implements JobExecutor {
         Path output = work.resolve("results").resolve(job.id() + "-" + repetition + ".json");
         Files.deleteIfExists(output);
         List<String> cmd = new ArrayList<>(mvn);
+        cmd.add("-o");
         cmd.addAll(databaseArgs(job.db()));
         cmd.add("-Dbenchmark.output=" + output);
         cmd.add("exec:exec");
@@ -204,19 +218,23 @@ public class BenchmarkJobExecutor implements JobExecutor {
         if (result.cancelled() || token.isCancelled()) {
           return new Cancelled();
         }
+        // from here on the benchmark itself ran: its failures are stored as FAILED runs
         if (result.exitCode() != 0) {
           return completed(job, branch, sha, "FAILED", started, fingerprint, commandLine, log, List.of());
         }
+        List<Measurement> extracted;
         try {
-          for (Measurement m : BenchmarkJsonExtractor.extract(output)) {
-            Map<String, String> dims = new HashMap<>(m.dims());
-            dims.put("repetition", String.valueOf(repetition));
-            measurements.add(new Measurement(m.kpi(), m.value(), m.unit(), Map.copyOf(dims)));
-          }
-        } catch (RuntimeException e) {
+          // a result of another benchmark or database (IllegalStateException) is not caught
+          extracted = BenchmarkJsonExtractor.extract(output, job.benchmark(), job.db());
+        } catch (UncheckedIOException | IllegalArgumentException e) {
           LOG.log(System.Logger.Level.WARNING,
               "job " + job.id() + ": benchmark ran but its result is unreadable, storing the run as FAILED: " + e, e);
           return completed(job, branch, sha, "FAILED", started, fingerprint, commandLine, log, List.of());
+        }
+        for (Measurement m : extracted) {
+          Map<String, String> dims = new HashMap<>(m.dims());
+          dims.put("repetition", String.valueOf(repetition));
+          measurements.add(new Measurement(m.kpi(), m.value(), m.unit(), Map.copyOf(dims)));
         }
       }
       return completed(job, branch, sha, "SUCCESS", started, fingerprint, commandLine, log, measurements);
@@ -227,41 +245,53 @@ public class BenchmarkJobExecutor implements JobExecutor {
     }
   }
 
+  /** False if cancelled; throws if the step failed. */
+  private static boolean succeeded(ProcessRunner.Result result, CancellationToken token, String step, Path log) {
+    if (result.cancelled() || token.isCancelled()) {
+      return false;
+    }
+    if (result.exitCode() != 0) {
+      throw new IllegalStateException(step + " failed with " + result.exitCode() + " (see " + log + ")");
+    }
+    return true;
+  }
+
   /** The checkout's project version, empty if cancelled. */
-  private Optional<String> operatonVersion(Job job, String sha, Map<String, String> env, CancellationToken token)
+  private Optional<String> operatonVersion(
+      Job job, String sha, Map<String, String> env, Path log, CancellationToken token)
       throws IOException, InterruptedException {
     Path out = config.logs().resolve(job.id() + "-" + sha + "-version.txt");
     Files.deleteIfExists(out);
     List<String> cmd = List.of(
-        mvnw(), "-q", "-N", "help:evaluate", "-Dexpression=project.version", "-DforceStdout", repoLocal());
-    ProcessRunner.Result result = run(cmd, config.checkout(), env, out, token);
-    if (result.cancelled()) {
+        mvnw(), "-q", "-N", "help:evaluate", "-Dexpression=project.version", "-DforceStdout",
+        "-Doutput=" + out, repoLocal());
+    if (!succeeded(run(cmd, config.checkout(), env, log, token), token, "reading the Operaton version", log)) {
       return Optional.empty();
     }
-    String last = Files.exists(out)
-        ? Files.readAllLines(out).stream().map(String::strip).filter(l -> !l.isEmpty()).reduce((a, b) -> b).orElse("")
-        : "";
-    if (result.exitCode() != 0 || !VERSION.matcher(last).matches()) {
+    String version = Files.exists(out) ? Files.readString(out).strip() : "";
+    if (!VERSION.matcher(version).matches()) {
       throw new IllegalStateException(
-          "cannot read the Operaton version (exit " + result.exitCode() + ", output '" + last + "', see " + out + ")");
+          "cannot read the Operaton version: '" + version + "' in " + out + " (see " + log + ")");
     }
-    return Optional.of(last);
+    return Optional.of(version);
   }
 
-  /** Starts a fresh PostgreSQL container and waits until it accepts TCP connections; false if cancelled. */
+  /**
+   * Removes leftover benchmark containers (by label or name prefix; only one job runs at a time),
+   * starts a fresh PostgreSQL container and waits until it accepts TCP connections. False if
+   * cancelled.
+   */
   private boolean startPostgres(String container, Path work, Path log, CancellationToken token)
       throws IOException, InterruptedException {
-    // a container of an earlier, crashed attempt of this job would block the name
-    run(List.of("docker", "rm", "-f", container), work, Map.of(), log, token);
-    ProcessRunner.Result started = run(
-        List.of("docker", "run", "--rm", "-d", "--name", container,
-            "-p", "127.0.0.1:" + PG_PORT + ":5432", "-e", "POSTGRES_PASSWORD=" + PG_PASSWORD, PG_IMAGE),
-        work, Map.of(), log, token);
-    if (started.cancelled()) {
+    if (!sweepContainers(work, log, token)) {
       return false;
     }
-    if (started.exitCode() != 0) {
-      throw new IllegalStateException("docker run " + PG_IMAGE + " failed with " + started.exitCode() + " (see " + log + ")");
+    ProcessRunner.Result started = run(
+        List.of("docker", "run", "--rm", "-d", "--name", container, "--label", LABEL_KEY + "=" + LABEL_VALUE,
+            "-p", "127.0.0.1:" + PG_PORT + ":5432", "-e", "POSTGRES_PASSWORD=" + PG_PASSWORD, PG_IMAGE),
+        work, Map.of(), log, token);
+    if (!succeeded(started, token, "docker run " + PG_IMAGE, log)) {
+      return false;
     }
     long deadline = System.nanoTime() + readinessTimeout.toNanos();
     while (true) {
@@ -281,6 +311,35 @@ public class BenchmarkJobExecutor implements JobExecutor {
       }
       Thread.sleep(READINESS_POLL.toMillis());
     }
+  }
+
+  /** A container left by a crashed daemon would otherwise hold the port forever. False if cancelled. */
+  private boolean sweepContainers(Path work, Path log, CancellationToken token)
+      throws IOException, InterruptedException {
+    Path listing = work.resolve("containers.txt");
+    Files.deleteIfExists(listing);
+    ProcessRunner.Result listed = run(
+        List.of("docker", "ps", "-a", "--format",
+            "{{.ID}}\t{{.Names}}\t{{.Label \"" + LABEL_KEY + "\"}}"),
+        work, Map.of(), listing, token);
+    if (!succeeded(listed, token, "docker ps", listing)) {
+      return false;
+    }
+    List<String> leftovers = new ArrayList<>();
+    for (String line : Files.readAllLines(listing)) {
+      String[] parts = line.strip().split("\t", -1);
+      String name = parts.length > 1 ? parts[1].strip() : "";
+      String label = parts.length > 2 ? parts[2].strip() : "";
+      if (!parts[0].isBlank() && (LABEL_VALUE.equals(label) || name.startsWith(CONTAINER_PREFIX))) {
+        leftovers.add(parts[0].strip());
+      }
+    }
+    if (leftovers.isEmpty()) {
+      return true;
+    }
+    LOG.log(System.Logger.Level.WARNING, "removing leftover benchmark containers {0}", leftovers);
+    return succeeded(run(with(List.of("docker", "rm", "-f"), leftovers.toArray(String[]::new)),
+        work, Map.of(), log, token), token, "removing leftover benchmark containers", log);
   }
 
   /** Never stopped by the job token, and runs even if the thread was interrupted. */
@@ -334,6 +393,26 @@ public class BenchmarkJobExecutor implements JobExecutor {
       List<String> cmd, Path workDir, Map<String, String> env, Path log, CancellationToken token)
       throws IOException, InterruptedException {
     return runner.run(cmd, workDir, env, log, token, config.idle().activityCheckInterval());
+  }
+
+  private static List<String> with(List<String> base, String... more) {
+    List<String> cmd = new ArrayList<>(base);
+    cmd.addAll(List.of(more));
+    return cmd;
+  }
+
+  /** The log's content from {@code offset} on, i.e. the output of the last step. */
+  private static String readFrom(Path log, long offset) throws IOException {
+    if (!Files.exists(log)) {
+      return "";
+    }
+    try (RandomAccessFile file = new RandomAccessFile(log.toFile(), "r")) {
+      long length = Math.max(0, file.length() - offset);
+      byte[] bytes = new byte[(int) Math.min(length, Integer.MAX_VALUE)];
+      file.seek(offset);
+      file.readFully(bytes);
+      return new String(bytes, StandardCharsets.UTF_8);
+    }
   }
 
   private String mvnw() {
