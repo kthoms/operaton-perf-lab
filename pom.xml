@@ -19,6 +19,7 @@
     <flyway.version>11.1.0</flyway.version>
     <junit.version>5.11.4</junit.version>
     <assertj.version>3.26.3</assertj.version>
+    <jackson.version>2.18.2</jackson.version>
     <testcontainers.version>1.21.4</testcontainers.version>
   </properties>
 
@@ -35,6 +36,13 @@
         <groupId>org.testcontainers</groupId>
         <artifactId>testcontainers-bom</artifactId>
         <version>${testcontainers.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${jackson.version}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>

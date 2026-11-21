@@ -1,0 +1,27 @@
+# Durations use the short style: <number><unit> with unit s, m, h or d (e.g. 5s, 15m, 20h).
+dataDir: /Volumes/PerfLab/perflab            # placeholder name of the NVMe volume
+backupDir: /Volumes/Backup/perflab-backups
+backupRetentionDays: 14
+upstreamUrl: https://github.com/operaton/operaton.git
+resultsDb:
+  jdbcUrl: jdbc:postgresql://127.0.0.1:5433/perflab
+  user: perflab
+  password: change-me
+branches:
+  - name: main
+    javaHome: /Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
+    mavenArgs: ["-Pdistro,distro-webjar-neo,h2-in-memory", "-Dskip.frontend.build=true", "clean", "install"]
+  - name: release/2.2.x
+    javaHome: /Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
+    mavenArgs: ["-Pdistro,distro-webjar-neo,h2-in-memory", "-Dskip.frontend.build=true", "clean", "install"]
+benchmarks:
+  - id: task-authorization
+    databases: [h2, postgresql]
+    branches: [main, release/2.2.x]
+    repetitions: 5
+idle:
+  minUserIdle: 15m
+  maxLoad1: 2.0
+  heavyProcessNames: [java, mvn, gradle, idea]
+  pollInterval: 1m
+  activityCheckInterval: 5s
