@@ -1,0 +1,354 @@
+{
+  "uid": "build-tests",
+  "title": "Operaton build tests",
+  "tags": [
+    "perflab"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "branch",
+        "label": "Branch",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "query": "select distinct branch from run where kind='BUILD' order by 1",
+        "definition": "select distinct branch from run where kind='BUILD' order by 1",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "segment",
+        "label": "Segment",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "query": "select distinct segment from run where kind='BUILD' order by 1",
+        "definition": "select distinct segment from run where kind='BUILD' order by 1",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": {},
+        "options": []
+      },
+      {
+        "name": "class",
+        "label": "Engine test class",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "query": "select distinct dims->>'class' from measurement where kpi='test.class.duration' and dims->>'module'='engine' order by 1",
+        "definition": "select distinct dims->>'class' from measurement where kpi='test.class.duration' and dims->>'module'='engine' order by 1",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {},
+        "options": []
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Regressions",
+        "enable": true,
+        "iconColor": "red",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "target": {
+          "refId": "Anno",
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, g.kpi || ' ' || coalesce(g.dims->>'module','') || ': ' || round(g.value::numeric,1) || ' vs ' || round(g.baseline_median::numeric,1) || ' | ' || coalesce(g.compare_url,'') as text, 'regression' as tags\nfrom regression g join run r on r.id=g.run_id\nwhere $__timeFilter(r.started_at) and r.branch in ($branch) and r.segment in ($segment)"
+        }
+      },
+      {
+        "name": "Segment changes",
+        "enable": true,
+        "iconColor": "orange",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "perflab-pg"
+        },
+        "target": {
+          "refId": "Anno",
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "select started_at as time, 'segment ' || prev || ' -> ' || segment as text, 'segment' as tags\nfrom (select started_at, branch, segment, lag(segment) over (partition by branch order by started_at) as prev\n      from run where kind='BUILD') s\nwhere prev is not null and prev <> segment and $__timeFilter(started_at) and branch in ($branch)"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Test time per module",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "spanNulls": true,
+            "lineWidth": 1,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "last"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, m.dims->>'module' || ' (' || r.branch || ', ' || r.segment || ')' as metric, m.value\nfrom measurement m join run r on r.id=m.run_id\nwhere m.kpi='test.module.duration' and r.kind='BUILD' and r.status='SUCCESS' and r.branch in ($branch) and r.segment in ($segment) and $__timeFilter(r.started_at)\norder by 1"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Engine module test time",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "spanNulls": true,
+            "lineWidth": 1,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "last"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, r.branch || ' (' || r.segment || ')' as metric, m.value\nfrom measurement m join run r on r.id=m.run_id\nwhere m.kpi='test.module.duration' and m.dims->>'module'='engine' and r.kind='BUILD' and r.status='SUCCESS' and r.branch in ($branch) and r.segment in ($segment) and $__timeFilter(r.started_at)\norder by 1"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Total build wall time",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "spanNulls": true,
+            "lineWidth": 1,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "last"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, r.branch || ' (' || r.segment || ')' as metric, m.value\nfrom measurement m join run r on r.id=m.run_id\nwhere m.kpi='build.total.wall' and r.kind='BUILD' and r.status='SUCCESS' and r.branch in ($branch) and r.segment in ($segment) and $__timeFilter(r.started_at)\norder by 1"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Top 20 slowest engine test classes (last run)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "with last as (\n  select r.id from run r where r.kind='BUILD' and r.status='SUCCESS' and r.branch in ($branch) and r.segment in ($segment) and $__timeFilter(r.started_at) order by r.started_at desc limit 1)\nselect m.dims->>'class' as \"class\", m.value as seconds\nfrom measurement m join last on m.run_id=last.id\nwhere m.kpi='test.class.duration' and m.dims->>'module'='engine'\norder by m.value desc limit 20"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Trend: selected engine test class ($class)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "spanNulls": true,
+            "lineWidth": 1,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "last"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, r.branch || ' (' || r.segment || ')' as metric, m.value\nfrom measurement m join run r on r.id=m.run_id\nwhere m.kpi='test.class.duration' and m.dims->>'module'='engine' and m.dims->>'class'='$class' and r.kind='BUILD' and r.status='SUCCESS' and r.branch in ($branch) and r.segment in ($segment) and $__timeFilter(r.started_at)\norder by 1"
+        }
+      ]
+    }
+  ]
+}

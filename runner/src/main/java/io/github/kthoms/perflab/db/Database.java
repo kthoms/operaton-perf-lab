@@ -18,7 +18,13 @@ public final class Database {
     ds.setUrl(jdbcUrl);
     ds.setUser(user);
     ds.setPassword(password);
-    Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+    var grafanaRoPassword = System.getenv().getOrDefault("PERFLAB_GRAFANA_RO_PASSWORD", "grafana-ro");
+    Flyway.configure()
+        .dataSource(ds)
+        .locations("classpath:db/migration")
+        .placeholders(java.util.Map.of("grafanaRoPassword", grafanaRoPassword))
+        .load()
+        .migrate();
     return new Database(ds);
   }
 

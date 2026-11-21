@@ -45,6 +45,22 @@ class DatabaseIT {
     }
   }
 
+  @Test
+  void grafanaRoUserCanReadButNotWrite() throws SQLException {
+    Database.connect(pg.getJdbcUrl(), pg.getUsername(), pg.getPassword());
+    try (var c =
+            java.sql.DriverManager.getConnection(pg.getJdbcUrl(), "grafana_ro", "grafana-ro");
+        var st = c.createStatement()) {
+      try (var rs = st.executeQuery("select count(*) from regression")) {
+        assertThat(rs.next()).isTrue();
+      }
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> st.executeUpdate("delete from measurement"))
+          .isInstanceOf(SQLException.class)
+          .hasMessageContaining("permission denied");
+    }
+  }
+
   private static List<String> tables(Database db) throws SQLException {
     var names = new ArrayList<String>();
     try (var c = db.dataSource().getConnection();

@@ -1,0 +1,17 @@
+apiVersion: 1
+datasources:
+  - name: PerfLab Results
+    uid: perflab-pg
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: results-db:5432
+    user: grafana_ro
+    isDefault: true
+    editable: false
+    jsonData:
+      database: ${PERFLAB_DB_NAME}
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: false
+    secureJsonData:
+      password: ${PERFLAB_GRAFANA_RO_PASSWORD}

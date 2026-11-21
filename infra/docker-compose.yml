@@ -23,8 +23,10 @@ services:
       PERFLAB_DB_USER: ${PERFLAB_DB_USER}
       PERFLAB_DB_PASSWORD: ${PERFLAB_DB_PASSWORD}
       PERFLAB_DB_NAME: ${PERFLAB_DB_NAME}
+      PERFLAB_GRAFANA_RO_PASSWORD: ${PERFLAB_GRAFANA_RO_PASSWORD:-grafana-ro}
     ports:
       - "3000:3000"
     volumes:
       - ${PERFLAB_DATA_DIR}/grafana:/var/lib/grafana
       - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/perflab-dashboards:ro
