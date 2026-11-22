@@ -1,0 +1,7 @@
+# Flyway migrations: the schema is the single source of truth for results (docs/superpowers/specs/2026-11-21-operaton-perf-lab-design.md:75) and an applied version is immutable (Flyway validates checksums on migrate, runner/src/main/java/io/github/kthoms/perflab/db/Database.java:38-46). Every dashboard query and the regression detector read these tables, so any change to an applied version is a schema change. New versions are free to add.
+runner/src/main/resources/db/migration/V1__init.sql
+runner/src/main/resources/db/migration/V2__run_job_unique.sql
+runner/src/main/resources/db/migration/V3__grafana_ro.sql
+runner/src/main/resources/db/migration/V4__run_source.sql
+# Grafana dashboards: provisioned as code with UI edits disabled (grafana/provisioning/dashboards/perflab.yml:6-7); their SQL carries the source='branch' baseline filter that keeps commit-runs out of every trend (README.md:68-70, runner/src/test/java/io/github/kthoms/perflab/DashboardQueriesTest.java:44).
+grafana/dashboards/*
