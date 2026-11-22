@@ -488,7 +488,11 @@ switch with "frugal", "max parallel" or "parallel --cap=N".
 | Architectural decisions | strongest tier | n/a |
 | Implementation from an approved plan | mid tier | the plan touches a halting gate, a protected file or shared library code |
 | Research / open-ended debugging | strongest tier | n/a |
-| `<roster agent>` (one row per generated agent) | its default tier | its escalate-when rule, from `bootstrap-agents` |
+| `code-reviewer` (final read-only gate, writes findings file) | strongest tier (opus) | never (already the top tier) |
+| `test-engineer` (writes and runs scoped tests) | mid tier (sonnet) | a change under `runner/.../perflab/analysis/**` or `.../results/**`, or a flaky or concurrent test |
+| `database-migration-engineer` (writes migrations, never applies) | mid tier (sonnet) | any new or changed `V<n>__*.sql` (Flyway applies it on daemon connect with no approval gate, `Database.java:38-46`), or a lock or rewrite of `run`/`measurement` |
+| `jobs-expert` (`runner/.../perflab/jobs/`) | mid tier (sonnet) | the change touches `PerfLabHomeGuard`, its call in `BenchmarkJobExecutor`, or how a job sets `source` (invariant gates) |
+| `idle-gate-expert` (`runner/.../perflab/idle/`) | mid tier (sonnet) | the change alters a `mayStart` check, the manual-job skip, or the mid-run cancel decision (idle-machine invariant) |
 
 Tier words: cheapest / mid / strongest (`bootstrap-agents` calls the same tiers cheapest /
 standard / high-reasoning). A roster row's model is the default in that agent's file. The dispatcher overrides it at launch
