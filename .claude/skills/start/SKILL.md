@@ -39,7 +39,7 @@ INTEGRATION_BRANCH=origin/main
 ISSUE_CMD=gh issue view {number} --repo kthoms/operaton-perf-lab --comments
 BRANCH_ISSUE_PATTERN={number}-{slug}
 WORKTREE_LAYOUT=siblings
-PLAN_DIR=docs/plans/
+PLAN_DIR=docs/superpowers/plans/
 DOMAIN_AGENTS=
 REPORT_CAP=400/200
 ```

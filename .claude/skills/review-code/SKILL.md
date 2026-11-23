@@ -136,7 +136,7 @@ DOCS_KEEP_BOUND=
 CRITICAL_GLOBS=.claude/critical-paths.txt
 DETECTION_TABLE=references/detection-table.md
 REQUIRED_AUDITS=references/audits.md
-PLAN_DIR=docs/plans/
+PLAN_DIR=docs/superpowers/plans/
 EXTERNAL_REVIEW_TOOLS=
 # follow-up: second opinion. Name the vendor CLI; diffs are sent there.
 SECOND_OPINION_CMD=

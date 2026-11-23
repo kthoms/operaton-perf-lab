@@ -68,7 +68,7 @@ TIMEBOX                — wall-time bound for the reviewer stage, total across 
 ```
 DETECTION_TABLE=../review-code/references/detection-table.md
 DOCS_ROOT=docs/
-PLAN_DIR=docs/plans/
+PLAN_DIR=docs/superpowers/plans/
 WORK_UNIT_RULE=one PR per plan; phases are commits. More only for: another repo, an ordering that needs a deploy in between, a protected-file change the user makes by hand, or the user asked.
 PROTECTED_PATTERNS=schema change, Flyway migration, drop column, drop table, baseline reset, delete results, purge runs, backup retention
 REQUIRED_AUDITS=references/plan-audits.md

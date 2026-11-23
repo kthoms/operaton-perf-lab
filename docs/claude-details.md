@@ -47,13 +47,13 @@ TOKEN_BUDGET_MODES  — Frugal / Parallel / Max Parallel (default Parallel; defi
 
 ### Rules
 
-- Every `catch` MUST log through the `System.Logger` the class already uses (`LOG.log(Level.WARNING, "...", e)`, for example `Daemon.java:300`) or rethrow with the cause attached. There is no error tracker (`ERROR_TRACKER` is none).
+- Every `catch` MUST log through the `System.Logger` the class already uses (`LOG.log(Level.WARNING, "...", e)`) or rethrow with the cause attached. There is no error tracker (`ERROR_TRACKER` is none).
 - A catch block that intentionally ignores an error must still say *why* it is non-critical, in a comment and in the log — silence and "this is fine" look identical from the outside.
 - Code review flags any silent catch as a bug, not a style nit.
 
 ### Why this matters
 
-We once spent hours chasing a UI bug where a cost-summary panel silently showed zero. Root cause: a downstream query was failing because a migration hadn't been applied yet — but the surrounding `catch {}` returned a zero fallback with no logging. The failure was real, active, and completely invisible. A crash would have been debugged in five minutes; the silent catch cost hours.
+A swallowed failure here is worse than a crash: a silent `catch` in the idle gate, run storage or the regression detector can let a wrong or missing measurement look like a real result, and the invariant (trustworthy numbers) breaks without any sign. A crash is debugged in minutes; a silent fallback can sit in the baselines for weeks.
 
 ### Where errors go, by context
 

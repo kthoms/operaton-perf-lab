@@ -650,7 +650,7 @@ inside, recent edits, uncommitted changes or commits not in the base branch is s
 - No CI exists in this repository (no `.github/workflows/`, no other provider's config). The design
   allows CI on GitHub-hosted runners only: nothing triggered from GitHub may execute on this Mac
   (design spec `:176`, plan `Global Constraints`). Never register a self-hosted runner.
-- Pre-commit: no commit hook or hooks manager is in use.
+- Pre-commit: no git pre-commit hook or hooks manager is in use (the `.claude/hooks/` guards are agent hooks, warn only).
 - Until a CI exists the gate is local: the test command in the details file's Configuration
   (`TEST_CMD`), scoped to what changed (see Project Rules for the measuring-machine caveat). A new
   CI workflow needs the user's approval.
