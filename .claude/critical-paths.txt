@@ -1,0 +1,5 @@
+# Critical paths confirmed at onboarding step 2: regression detection and results.
+# Switched off for the first install: lines start with "# off: " so every diff is E2E-exempt.
+# follow-up: turn on the end-to-end gate with: sed -i.bak 's/^# off: //' .claude/critical-paths.txt
+# off: runner/src/main/java/io/github/kthoms/perflab/analysis/**
+# off: runner/src/main/java/io/github/kthoms/perflab/results/**
