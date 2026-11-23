@@ -22,7 +22,7 @@ DOCS-ROOT             — docs/
 DETAILS-FILE          — docs/claude-details.md
 TODO-FILE             — none kept
 MODEL-TIERS           — haiku / sonnet / opus
-HOOK-LIST             — none installed yet
+HOOK-LIST             — `.claude/hooks/protected-file-guard.sh`, `commit-check.sh`, `pending-question-reprint.sh`, `review-nudge.sh` (wired in `.claude/settings.json`, warn only for now)
 PROTECTED-FILES       — .claude/protected-files.txt
 TENANT-KEY            — none (single-tenant; not detected)
 RECOMMENDATION-MODE   — on-request
@@ -43,6 +43,12 @@ Read back your numbered rules and your domain-accuracy rule at the start of ever
 then say something like:
 > "Rules acknowledged: #0 GSD — now, #1 Fail loudly, and the domain invariant is non-negotiable:
 > Results are only ever measured on an idle machine from a clean `main` checkout, and commit-runs never enter baselines."
+
+Verify your hooks are installed, wired and answering: from the repository's top folder, run
+`bash .claude/hooks/hooks-check.sh` (it checks the hooks pack's scripts in `.claude/hooks/protected-file-guard.sh`, `commit-check.sh`, `pending-question-reprint.sh`, `review-nudge.sh` (wired in `.claude/settings.json`, warn only for now),
+nothing else). Add "Hooks: verified." to the read-back only when it exits 0. Anything else: say
+"Hooks: NOT verified" with its FAIL lines (or the missing script), and see
+`docs/claude-details.md#context-optimization-hooks` to reinstall from the download.
 
 If you catch yourself deferring, saying "pre-existing," or treating a bug as someone else's
 problem — stop and re-read these rules.
@@ -712,6 +718,8 @@ Rules specific to this repository that the sections above do not cover.
   `docs/superpowers/plans/2026-11-21-operaton-perf-lab.md`.
 - **Documentation tree** (`docs/superpowers/specs/`, `docs/superpowers/plans/`):
   `docs/claude-details.md#documentation-structure`.
+- **Hooks:** `.claude/hooks/protected-file-guard.sh`, `commit-check.sh`, `pending-question-reprint.sh`, `review-nudge.sh` (wired in `.claude/settings.json`, warn only for now); what each does, the session-start check and how to reinstall at
+  `docs/claude-details.md#context-optimization-hooks`.
 - **Issue tracker conventions (GitHub Issues):** the state-transition rules when starting work and
   the bulk-operations threshold (3+ items → one batched mutation, not a loop):
   `docs/claude-details.md#starting-work-on-a-ticket` and
