@@ -5,3 +5,4 @@ item templates/CLAUDE.template.md f753318e6aff807d69fe9625a2b66540bc62ce8c 0.1.0
 item templates/claude-details.template.md d74087922eaaec2f3f02a14aea09821674170742 0.1.0
 item skills/bootstrap-agents 3e886a83fffd5e0371c9f01bf02cef16f0c58241 0.1.0
 item skills/bootstrap-claude-mds f6b047b3fcc9360dcac246af39687f7d7446f633 0.1.0
+item skills/checkpoint af33c5ec7edda3d47b0067541fdc422caece8955 0.1.0
