@@ -1,0 +1,45 @@
+{
+  "generated_by": "bootstrap-agents",
+  "agents": [
+    {
+      "name": "code-reviewer",
+      "archetype": "code-reviewer",
+      "generated_at": "2026-11-22",
+      "survey_signals": ["always proposed (generalist final gate)", "Java 25 / Maven multi-module (pom.xml)"],
+      "globs_used": [],
+      "commands_used": {"lint_ci": "UNVERIFIED: none defined (no checkstyle/spotless in pom.xml)", "typecheck": "none (javac inside Maven)", "git": "git diff *, git log *, git show *"}
+    },
+    {
+      "name": "test-engineer",
+      "archetype": "test-engineer",
+      "generated_at": "2026-11-22",
+      "survey_signals": ["runner/src/test/** with JUnit 5.11 + AssertJ + Testcontainers", "failsafe plugin for *IT (runner/pom.xml)"],
+      "globs_used": ["runner/src/main/java/io/github/kthoms/perflab/analysis/**", "runner/src/main/java/io/github/kthoms/perflab/results/**", "runner/src/test/**"],
+      "commands_used": {"test_scoped": "mvn -pl runner test -Dtest=* (scoping is prose only)", "e2e": "none", "left_out": "mvn -pl runner verify (whole suite, Testcontainers, measuring machine: CLAUDE.md:677)"}
+    },
+    {
+      "name": "database-migration-engineer",
+      "archetype": "database-migration-engineer",
+      "generated_at": "2026-11-22",
+      "survey_signals": ["runner/src/main/resources/db/migration/V1-V4 (Flyway 11.1.0, PostgreSQL 17)", "Flyway migrates on daemon connect (Database.java:38-46)"],
+      "globs_used": ["runner/src/main/resources/db/migration/**"],
+      "commands_used": {"migrate": "none allowed (never runs the app or Flyway)", "git": "git diff *, git log *, git status, git show *"}
+    },
+    {
+      "name": "jobs-expert",
+      "archetype": "domain-expert",
+      "generated_at": "2026-11-22",
+      "survey_signals": ["runner/src/main/java/io/github/kthoms/perflab/jobs/ has 11 files (>= DOMAIN_MIN_FILES 5)", "holds PerfLabHomeGuard and source assignment (invariant gates 1 and 3)"],
+      "globs_used": ["runner/src/main/java/io/github/kthoms/perflab/jobs/**", "runner/src/test/java/io/github/kthoms/perflab/jobs/**"],
+      "commands_used": {"test_scoped": "mvn -pl runner test -Dtest=* (scoping is prose only)"}
+    },
+    {
+      "name": "idle-gate-expert",
+      "archetype": "domain-expert",
+      "generated_at": "2026-11-22",
+      "survey_signals": ["runner/src/main/java/io/github/kthoms/perflab/idle/ has 4 files (below DOMAIN_MIN_FILES 5; added by user decision because it guards the idle-machine invariant)"],
+      "globs_used": ["runner/src/main/java/io/github/kthoms/perflab/idle/**", "runner/src/test/java/io/github/kthoms/perflab/idle/**"],
+      "commands_used": {"test_scoped": "mvn -pl runner test -Dtest=* (scoping is prose only)"}
+    }
+  ]
+}
