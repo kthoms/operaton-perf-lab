@@ -34,24 +34,32 @@ public class Scheduler {
 
   public void ensureDueJobs(Instant now) {
     for (BranchConfig branch : config.branches()) {
-      ensure(JobKind.BUILD, branch.name(), null, null, Job.PRIORITY_BUILD, now);
+      ensure(JobKind.BUILD, branch.name(), null, null, Job.PRIORITY_BUILD, MIN_INTERVAL, now);
     }
     for (BenchmarkConfig benchmark : orEmpty(config.benchmarks())) {
       for (String db : orEmpty(benchmark.databases())) {
         for (String branch : orEmpty(benchmark.branches())) {
-          ensure(JobKind.BENCHMARK, branch, benchmark.id(), db, Job.PRIORITY_BENCHMARK, now);
+          for (String series : benchmark.seriesIds()) {
+            ensure(JobKind.BENCHMARK, branch, series, db, Job.PRIORITY_BENCHMARK, interval(benchmark), now);
+          }
         }
       }
     }
   }
 
   private void ensure(
-      JobKind kind, String branch, String benchmark, String db, int priority, Instant now) {
+      JobKind kind,
+      String branch,
+      String benchmark,
+      String db,
+      int priority,
+      Duration minInterval,
+      Instant now) {
     if (jobs.hasOpen(kind, branch, benchmark, db)) {
       return;
     }
-    if (isRecent(results.lastRunStart(kind, branch, benchmark, db), now)
-        || isRecent(jobs.lastFinished(kind, branch, benchmark, db), now)) {
+    if (isRecent(results.lastRunStart(kind, branch, benchmark, db), minInterval, now)
+        || isRecent(jobs.lastFinished(kind, branch, benchmark, db), minInterval, now)) {
       return;
     }
     long id = jobs.enqueue(kind, branch, null, benchmark, db, priority);
@@ -59,8 +67,12 @@ public class Scheduler {
     LOG.log(System.Logger.Level.INFO, "enqueued job {0}: {1} {2}", id, kind, series);
   }
 
-  private static boolean isRecent(Optional<Instant> when, Instant now) {
-    return when.isPresent() && !when.get().isBefore(now.minus(MIN_INTERVAL));
+  private static boolean isRecent(Optional<Instant> when, Duration minInterval, Instant now) {
+    return when.isPresent() && !when.get().isBefore(now.minus(minInterval));
+  }
+
+  private static Duration interval(BenchmarkConfig benchmark) {
+    return benchmark.minInterval() == null ? MIN_INTERVAL : benchmark.minInterval();
   }
 
   private static <T> List<T> orEmpty(List<T> list) {

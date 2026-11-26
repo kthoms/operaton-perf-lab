@@ -48,6 +48,16 @@ install script and `docker compose ... up -d`.
 - `perflab status` run from a terminal reports "user active": you are typing in it. That is expected;
   the daemon's own decision is in its log.
 
+## Database size (task count)
+
+The task-authorization benchmark creates its own data in a fresh database and times authorized task
+queries; the cost depends on how many tasks exist. Without `tasks` in the benchmark's config entry
+it measures one size (5000 tasks). With `tasks: [1000, 5000, 20000]` every size is its own series
+named `task-authorization@<tasks>`: its own jobs, its own entry in the Grafana `benchmark` variable
+and its own regression baseline. Sizes are never mixed. Changing the list starts new series; old
+series keep their history. `minInterval` (e.g. `6h`, default 20h) sets how soon a series is queued again; each run still waits for
+the idle gate. Larger sizes take longer and fill the benchmark database.
+
 ## When jobs start (idle gate)
 
 A job starts only while the owner has been idle for `idle.minUserIdle`, the 1-minute load is at most

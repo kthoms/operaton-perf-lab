@@ -58,6 +58,29 @@ public final class ConfigLoader {
             require(b.mavenArgs(), "branches[].mavenArgs", yml);
         }
         require(c.benchmarks(), "benchmarks", yml);
+        for (var b : c.benchmarks()) {
+            if (b.minInterval() != null && (b.minInterval().isZero() || b.minInterval().isNegative())) {
+                throw new IllegalArgumentException("Config " + yml + ": 'benchmarks[" + b.id()
+                        + "].minInterval' must be positive, was " + b.minInterval());
+            }
+            if (b.tasks() == null) {
+                continue;
+            }
+            if (b.id().contains("@")) {
+                throw new IllegalArgumentException("Config " + yml + ": benchmark id '" + b.id()
+                        + "' must not contain '@' (it separates the id from the task count)");
+            }
+            for (Integer t : b.tasks()) {
+                if (t == null || t < 1) {
+                    throw new IllegalArgumentException("Config " + yml + ": 'benchmarks[" + b.id()
+                            + "].tasks' must be positive whole numbers, was " + b.tasks());
+                }
+            }
+            if (b.tasks().stream().distinct().count() != b.tasks().size()) {
+                throw new IllegalArgumentException("Config " + yml + ": 'benchmarks[" + b.id()
+                        + "].tasks' lists a size twice: " + b.tasks());
+            }
+        }
         require(c.idle(), "idle", yml);
         require(c.idle().minUserIdle(), "idle.minUserIdle", yml);
         if (!(c.idle().maxLoad1() > 0)) {

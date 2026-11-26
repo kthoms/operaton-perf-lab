@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -123,14 +124,23 @@ public class BenchmarkJobExecutor implements JobExecutor {
   }
 
   private Outcome benchmark(Job job, CancellationToken token) throws IOException, InterruptedException {
-    if (!BENCHMARK_ID.equals(job.benchmark())) {
+    String baseId = BenchmarkConfig.baseId(job.benchmark());
+    if (!BENCHMARK_ID.equals(baseId)) {
       return new NotApplicable("unknown benchmark '" + job.benchmark() + "'");
+    }
+    OptionalInt tasks;
+    try {
+      tasks = BenchmarkConfig.tasksOf(job.benchmark());
+    } catch (NumberFormatException e) {
+      return new NotApplicable("benchmark '" + job.benchmark() + "' has no valid task count after '@'");
     }
     if (!H2.equals(job.db()) && !POSTGRESQL.equals(job.db())) {
       return new NotApplicable("unsupported database '" + job.db() + "'");
     }
     Optional<BenchmarkConfig> benchmarkConfig =
-        config.benchmarks().stream().filter(b -> b.id().equals(job.benchmark())).findFirst();
+        config.benchmarks().stream()
+            .filter(b -> b.id().equals(baseId) && b.seriesIds().contains(job.benchmark()))
+            .findFirst();
     if (benchmarkConfig.isEmpty()) {
       return new NotApplicable("benchmark '" + job.benchmark() + "' is not configured");
     }
@@ -166,8 +176,11 @@ public class BenchmarkJobExecutor implements JobExecutor {
         job.id(), job.benchmark(), job.db(), sha, branch.name(), log);
 
     // untimed prep: install the engine under test
+    // the engine imports operaton-bom (not a parent, so -am skips it): install it as well where it exists
+    String modules = Files.isDirectory(config.checkout().resolve("bom/operaton-bom"))
+        ? "engine,bom/operaton-bom,bom/operaton-only-bom" : "engine";
     List<String> prep = List.of(
-        mvnw(), "install", "-DskipTests", "-Pdistro", "-Dskip.frontend.build=true", "-pl", "engine", "-am",
+        mvnw(), "install", "-DskipTests", "-Pdistro", "-Dskip.frontend.build=true", "-pl", modules, "-am",
         repoLocal());
     if (!succeeded(run(prep, config.checkout(), env, log, token), token, "engine install (prep)", log)) {
       return new Cancelled();
@@ -218,6 +231,7 @@ public class BenchmarkJobExecutor implements JobExecutor {
         cmd.add("-o");
         cmd.addAll(databaseArgs(job.db()));
         cmd.add("-Dbenchmark.output=" + output);
+        tasks.ifPresent(t -> cmd.add("-Dbenchmark.tasks=" + t));
         cmd.add("exec:exec");
         if (commandLine == null) {
           commandLine = String.join(" ", cmd);
@@ -233,7 +247,7 @@ public class BenchmarkJobExecutor implements JobExecutor {
         List<Measurement> extracted;
         try {
           // a result of another benchmark or database (IllegalStateException) is not caught
-          extracted = BenchmarkJsonExtractor.extract(output, job.benchmark(), job.db());
+          extracted = BenchmarkJsonExtractor.extract(output, baseId, job.benchmark(), job.db());
         } catch (UncheckedIOException | IllegalArgumentException e) {
           LOG.log(System.Logger.Level.WARNING,
               "job " + job.id() + ": benchmark ran but its result is unreadable, storing the run as FAILED: " + e, e);
