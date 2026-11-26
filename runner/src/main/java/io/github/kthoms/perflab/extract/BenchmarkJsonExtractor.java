@@ -29,6 +29,17 @@ public final class BenchmarkJsonExtractor {
 
   /** As {@link #extract(Path)}, and the file must belong to this benchmark and database. */
   public static List<Measurement> extract(Path json, String expectedBenchmark, String expectedDatabase) {
+    return extract(json, expectedBenchmark, expectedBenchmark, expectedDatabase);
+  }
+
+  /**
+   * As above, with the series name stored in the {@code benchmark} dimension: for a benchmark run at
+   * several sizes it is {@code <id>@<tasks>}, so every size has its own baseline. The file's own
+   * id must still be {@code expectedBenchmark}, and for a sized series its {@code params.tasks}
+   * must match the size in the name.
+   */
+  public static List<Measurement> extract(
+      Path json, String expectedBenchmark, String seriesName, String expectedDatabase) {
     JsonNode root;
     try {
       root = JSON.readTree(json.toFile());
@@ -51,6 +62,18 @@ public final class BenchmarkJsonExtractor {
       throw new IllegalStateException(
           json + ": result for database '" + database + "', expected '" + expectedDatabase + "'");
     }
+    if (seriesName != null && !seriesName.equals(benchmark)) {
+      int at = seriesName.indexOf('@');
+      if (at >= 0) {
+        String expectedTasks = seriesName.substring(at + 1);
+        String actualTasks = root.path("params").path("tasks").asText(null);
+        if (!expectedTasks.equals(actualTasks)) {
+          throw new IllegalStateException(
+              json + ": result with tasks=" + actualTasks + ", expected " + expectedTasks + " for series '" + seriesName + "'");
+        }
+      }
+    }
+    String series = seriesName == null ? benchmark : seriesName;
     List<Double> iterations = values(json, "iterationsMs", root.path("iterationsMs"));
     List<Measurement> out = new ArrayList<>();
     for (int i = 0; i < iterations.size(); i++) {
@@ -59,10 +82,10 @@ public final class BenchmarkJsonExtractor {
               "benchmark.iteration.duration",
               iterations.get(i),
               "ms",
-              Map.of("benchmark", benchmark, "iteration", String.valueOf(i + 1))));
+              Map.of("benchmark", series, "iteration", String.valueOf(i + 1))));
     }
     out.add(
-        new Measurement("benchmark.median.duration", median(iterations), "ms", Map.of("benchmark", benchmark)));
+        new Measurement("benchmark.median.duration", median(iterations), "ms", Map.of("benchmark", series)));
 
     JsonNode operations = root.path("operationsMs");
     if (!operations.isMissingNode()) {
@@ -77,7 +100,7 @@ public final class BenchmarkJsonExtractor {
                 "benchmark.operation.median.duration",
                 median(values),
                 "ms",
-                Map.of("benchmark", benchmark, "operation", op.getKey())));
+                Map.of("benchmark", series, "operation", op.getKey())));
       }
     }
     return out;

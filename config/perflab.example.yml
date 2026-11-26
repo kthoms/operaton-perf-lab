@@ -20,6 +20,10 @@ benchmarks:
     databases: [h2, postgresql]
     branches: [main, release/2.2.x]
     repetitions: 5
+    # optional: numbers of tasks to measure with; every size is its own series ("<id>@<tasks>") with
+    # its own baseline. Without it, one series at the benchmark's default of 5000 tasks.
+    tasks: [1000, 5000, 20000]
+    minInterval: 6h   # optional, default 20h: how soon a series is queued again (each run still waits for the idle gate)
 idle:
   minUserIdle: 15m
   maxLoad1: 2.0

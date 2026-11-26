@@ -168,6 +168,60 @@ class BenchmarkJobExecutorTest {
   }
 
   @Test
+  void sizedSeriesPassesTheTaskCountAndKeepsTheSizeInTheSeriesName() {
+    config = withTasks(List.of(1000, 5000));
+    executor = executor(Duration.ofSeconds(5));
+
+    Completed done = (Completed) executor.execute(job("task-authorization@1000", "h2"), token);
+
+    assertThat(runner.commands.stream().filter(has("exec:exec")))
+        .isNotEmpty()
+        .allSatisfy(cmd -> assertThat(cmd).contains("-Dbenchmark.tasks=1000"));
+    assertThat(done.run().benchmark()).isEqualTo("task-authorization@1000");
+    assertThat(done.run().status()).isEqualTo("SUCCESS");
+    assertThat(done.measurements())
+        .isNotEmpty()
+        .allSatisfy(m -> assertThat(m.dims()).containsEntry("benchmark", "task-authorization@1000"));
+  }
+
+  @Test
+  void unsizedSeriesPassesNoTaskCount() {
+    executor.execute(job("h2"), token);
+    assertThat(runner.commands.stream().filter(has("exec:exec")))
+        .isNotEmpty()
+        .allSatisfy(cmd -> assertThat(cmd).noneMatch(a -> a.startsWith("-Dbenchmark.tasks=")));
+  }
+
+  @Test
+  void aSizeThatIsNotConfiguredIsNotApplicable() {
+    config = withTasks(List.of(1000));
+    executor = executor(Duration.ofSeconds(5));
+
+    Outcome outcome = executor.execute(job("task-authorization@5000", "h2"), token);
+
+    assertThat(outcome).isInstanceOf(NotApplicable.class);
+    assertThat(runner.commands).isEmpty();
+  }
+
+  private PerfLabConfig withTasks(List<Integer> tasks) {
+    return new PerfLabConfig(
+        config.dataDir(), config.backupDir(), config.backupRetentionDays(), config.upstreamUrl(),
+        config.resultsDb(), config.branches(),
+        List.of(new BenchmarkConfig("task-authorization", List.of("h2", "postgresql"), List.of("main"), 2, tasks)),
+        config.idle());
+  }
+
+  @Test
+  void prepInstallsTheBomModulesWhereTheCheckoutHasThem() throws IOException {
+    Files.createDirectories(config.checkout().resolve("bom/operaton-bom"));
+
+    executor.execute(job("h2"), token);
+
+    assertThat(runner.commands.get(0))
+        .containsSequence("-pl", "engine,bom/operaton-bom,bom/operaton-only-bom", "-am");
+  }
+
+  @Test
   void commitJobRunIsMarkedAsCommitSource() {
     Job commitJob =
         new Job(9, JobKind.BENCHMARK, null, MAIN_SHA, "task-authorization", "h2", Job.PRIORITY_MANUAL,
@@ -481,7 +535,9 @@ class BenchmarkJobExecutorTest {
             result != null
                 ? result
                 : "{\"benchmark\":\"task-authorization\",\"database\":\"" + arg(cmd, "-Dbenchmark.database=")
-                    + "\",\"params\":{},\"iterationsMs\":[1.0,2.0,3.0],"
+                    + "\",\"params\":" + (cmd.stream().anyMatch(a -> a.startsWith("-Dbenchmark.tasks="))
+                        ? "{\"tasks\":" + arg(cmd, "-Dbenchmark.tasks=") + "}" : "{}")
+                    + ",\"iterationsMs\":[1.0,2.0,3.0],"
                     + "\"operationsMs\":{\"listPage\":[0.5,1.0,1.5],\"count\":[0.5,1.0,1.5]}}");
       }
       return new Result(0, false, Duration.ofSeconds(1));

@@ -101,4 +101,47 @@ class BenchmarkJsonExtractorTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("iterationsMs");
   }
+
+  @Test
+  void sizedSeriesIsStoredInTheBenchmarkDimension() throws Exception {
+    Path json =
+        Files.writeString(
+            dir.resolve("r.json"),
+            "{\"benchmark\":\"task-authorization\",\"database\":\"h2\",\"params\":{\"tasks\":1000},"
+                + "\"iterationsMs\":[3.0,6.0,9.0],\"operationsMs\":{\"count\":[2.0,4.0,6.0]}}");
+
+    List<Measurement> measurements =
+        BenchmarkJsonExtractor.extract(json, "task-authorization", "task-authorization@1000", "h2");
+
+    assertThat(measurements).isNotEmpty();
+    assertThat(measurements).allSatisfy(m -> assertThat(m.dims()).containsEntry("benchmark", "task-authorization@1000"));
+  }
+
+  @Test
+  void sizedSeriesRejectsAResultOfAnotherSize() throws Exception {
+    Path json =
+        Files.writeString(
+            dir.resolve("r.json"),
+            "{\"benchmark\":\"task-authorization\",\"database\":\"h2\",\"params\":{\"tasks\":5000},"
+                + "\"iterationsMs\":[3.0],\"operationsMs\":{\"count\":[2.0]}}");
+
+    assertThatThrownBy(
+            () -> BenchmarkJsonExtractor.extract(json, "task-authorization", "task-authorization@1000", "h2"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("tasks=5000")
+        .hasMessageContaining("expected 1000");
+  }
+
+  @Test
+  void sizedSeriesRejectsAResultWithoutTasks() throws Exception {
+    Path json =
+        Files.writeString(
+            dir.resolve("r.json"),
+            "{\"benchmark\":\"task-authorization\",\"database\":\"h2\",\"params\":{},"
+                + "\"iterationsMs\":[3.0],\"operationsMs\":{\"count\":[2.0]}}");
+
+    assertThatThrownBy(
+            () -> BenchmarkJsonExtractor.extract(json, "task-authorization", "task-authorization@1000", "h2"))
+        .isInstanceOf(IllegalStateException.class);
+  }
 }

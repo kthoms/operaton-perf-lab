@@ -137,4 +137,27 @@ class ConfigLoaderTest {
         assertThat(day.contains(java.time.LocalTime.of(17, 0))).isFalse();
         assertThat(day.contains(java.time.LocalTime.of(8, 59))).isFalse();
     }
+
+@Test
+void loadsTaskSizesOfABenchmark() {
+var c = ConfigLoader.load(Path.of("../config/perflab.example.yml"));
+assertThat(c.benchmarks().get(0).tasks()).containsExactly(1000, 5000, 20000);
+assertThat(c.benchmarks().get(0).minInterval()).isEqualTo(Duration.ofHours(6));
+}
+
+@Test
+void nonPositiveMinIntervalFailsAtLoad(@TempDir Path t) throws IOException {
+String base = Files.readString(Path.of("../config/perflab.example.yml"));
+Path f = Files.writeString(t.resolve("c.yml"), base.replace("minInterval: 6h", "minInterval: 0s"));
+assertThatThrownBy(() -> ConfigLoader.load(f)).hasMessageContaining("minInterval");
+}
+
+@Test
+void nonPositiveOrDuplicateTaskSizesFailAtLoad(@TempDir Path t) throws IOException {
+String base = Files.readString(Path.of("../config/perflab.example.yml"));
+Path zero = Files.writeString(t.resolve("zero.yml"), base.replace("tasks: [1000, 5000, 20000]", "tasks: [0]"));
+assertThatThrownBy(() -> ConfigLoader.load(zero)).hasMessageContaining("positive whole numbers");
+Path twice = Files.writeString(t.resolve("twice.yml"), base.replace("tasks: [1000, 5000, 20000]", "tasks: [1000, 1000]"));
+assertThatThrownBy(() -> ConfigLoader.load(twice)).hasMessageContaining("twice");
+}
 }
