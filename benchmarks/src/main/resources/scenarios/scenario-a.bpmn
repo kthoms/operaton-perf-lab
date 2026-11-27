@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Scenario A of the BPMN engine comparison (see scenarios/NOTICE.md): start, three expression service tasks that
+     each increment counter, end. Started synchronously, the caller gets counter = 3 back. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:operaton="http://operaton.org/schema/1.0/bpmn"
+                  id="Definitions_ScenarioA" targetNamespace="http://example.com/bench">
+  <bpmn:process id="ScenarioA" isExecutable="true" operaton:historyTimeToLive="P1D">
+    <bpmn:startEvent id="Start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="Start" targetRef="Task1" />
+    <bpmn:serviceTask id="Task1" name="Task 1" operaton:expression="${counter + 1}" operaton:resultVariable="counter" />
+    <bpmn:sequenceFlow id="f2" sourceRef="Task1" targetRef="Task2" />
+    <bpmn:serviceTask id="Task2" name="Task 2" operaton:expression="${counter + 1}" operaton:resultVariable="counter" />
+    <bpmn:sequenceFlow id="f3" sourceRef="Task2" targetRef="Task3" />
+    <bpmn:serviceTask id="Task3" name="Task 3" operaton:expression="${counter + 1}" operaton:resultVariable="counter" />
+    <bpmn:sequenceFlow id="f4" sourceRef="Task3" targetRef="End" />
+    <bpmn:endEvent id="End" />
+  </bpmn:process>
+</bpmn:definitions>

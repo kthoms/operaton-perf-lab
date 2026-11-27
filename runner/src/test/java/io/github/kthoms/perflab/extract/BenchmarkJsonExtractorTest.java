@@ -62,6 +62,40 @@ class BenchmarkJsonExtractorTest {
   }
 
   @Test
+  void extractsDerivedMetrics() throws Exception {
+    Path json =
+        Files.writeString(
+            dir.resolve("r.json"),
+            "{\"benchmark\":\"scenario-a\",\"database\":\"h2\",\"params\":{},"
+                + "\"iterationsMs\":[100.0],\"operationsMs\":{\"concurrency-10\":[100.0]},"
+                + "\"metrics\":{\"throughput.concurrency-10\":{\"value\":5000.5,\"unit\":\"1/s\"},"
+                + "\"latencyP95.concurrency-10\":{\"value\":3.25,\"unit\":\"ms\"}}}");
+
+    List<Measurement> measurements = BenchmarkJsonExtractor.extract(json, "scenario-a", "h2");
+
+    assertThat(measurements)
+        .filteredOn(m -> m.kpi().equals("benchmark.metric"))
+        .containsExactly(
+            new Measurement("benchmark.metric", 5000.5, "1/s",
+                Map.of("benchmark", "scenario-a", "metric", "throughput.concurrency-10")),
+            new Measurement("benchmark.metric", 3.25, "ms",
+                Map.of("benchmark", "scenario-a", "metric", "latencyP95.concurrency-10")));
+  }
+
+  @Test
+  void metricWithoutUnitIsMalformed() throws Exception {
+    Path json =
+        Files.writeString(
+            dir.resolve("r.json"),
+            "{\"benchmark\":\"scenario-a\",\"database\":\"h2\",\"iterationsMs\":[1.0],"
+                + "\"metrics\":{\"throughput\":{\"value\":1.0}}}");
+
+    assertThatThrownBy(() -> BenchmarkJsonExtractor.extract(json))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("throughput");
+  }
+
+  @Test
   void resultOfAnotherBenchmarkOrDatabaseIsRejected() throws Exception {
     Path json =
         Files.writeString(

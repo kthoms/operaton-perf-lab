@@ -12,7 +12,7 @@
   <artifactId>benchmarks</artifactId>
   <description>
     Engine benchmarks, compiled and run by the runner against the Operaton version under test:
-    mvn -f benchmarks/pom.xml -Doperaton.version=X compile, then ... exec:exec
+    mvn -f benchmarks/pom.xml -Doperaton.version=X compile, then ... -Dbenchmark.id=ID exec:exec
   </description>
 
   <properties>
@@ -25,15 +25,20 @@
     <benchmark.buildDir>${project.basedir}/target</benchmark.buildDir>
 
     <!-- exec:exec knobs, overridable with -D -->
+    <benchmark.id>task-authorization</benchmark.id>
     <benchmark.output>${benchmark.buildDir}/benchmark.json</benchmark.output>
     <benchmark.database>h2</benchmark.database>
     <benchmark.jdbcUrl>jdbc:h2:mem:perflab-bench;DB_CLOSE_DELAY=-1</benchmark.jdbcUrl>
     <benchmark.jdbcUser>sa</benchmark.jdbcUser>
     <benchmark.jdbcPassword></benchmark.jdbcPassword>
-    <benchmark.tasks>5000</benchmark.tasks>
-    <benchmark.groups>10</benchmark.groups>
-    <benchmark.warmup>30</benchmark.warmup>
-    <benchmark.iterations>200</benchmark.iterations>
+    <!-- blank = the benchmark's own default (task-authorization: 5000 tasks, 10 groups, 30 warmup, 200 iterations;
+         scenario-*: concurrency 1,10,25,50, 2000 instances, 2 warmup, 10 iterations; engine-startup: 1 warmup, 10 iterations) -->
+    <benchmark.tasks></benchmark.tasks>
+    <benchmark.groups></benchmark.groups>
+    <benchmark.warmup></benchmark.warmup>
+    <benchmark.iterations></benchmark.iterations>
+    <benchmark.concurrency></benchmark.concurrency>
+    <benchmark.instances></benchmark.instances>
   </properties>
 
   <dependencies>
@@ -41,6 +46,12 @@
       <groupId>org.operaton.bpm</groupId>
       <artifactId>operaton-engine</artifactId>
       <version>${operaton.version}</version>
+    </dependency>
+    <!-- UUID ids like the Spring Boot starter (the engine declares it as provided) -->
+    <dependency>
+      <groupId>com.fasterxml.uuid</groupId>
+      <artifactId>java-uuid-generator</artifactId>
+      <version>5.2.0</version>
     </dependency>
     <dependency>
       <groupId>com.h2database</groupId>
@@ -92,6 +103,7 @@
           <!-- forked JVM of the Maven JDK (the branch JAVA_HOME), so Maven itself is not measured -->
           <executable>${java.home}/bin/java</executable>
           <arguments>
+            <argument>-Dbenchmark.id=${benchmark.id}</argument>
             <argument>-Dbenchmark.output=${benchmark.output}</argument>
             <argument>-Dbenchmark.database=${benchmark.database}</argument>
             <argument>-Dbenchmark.jdbcUrl=${benchmark.jdbcUrl}</argument>
@@ -101,9 +113,11 @@
             <argument>-Dbenchmark.groups=${benchmark.groups}</argument>
             <argument>-Dbenchmark.warmup=${benchmark.warmup}</argument>
             <argument>-Dbenchmark.iterations=${benchmark.iterations}</argument>
+            <argument>-Dbenchmark.concurrency=${benchmark.concurrency}</argument>
+            <argument>-Dbenchmark.instances=${benchmark.instances}</argument>
             <argument>-classpath</argument>
             <classpath/>
-            <argument>io.github.kthoms.perflab.bench.TaskAuthorizationBenchmark</argument>
+            <argument>io.github.kthoms.perflab.bench.BenchmarkMain</argument>
           </arguments>
         </configuration>
       </plugin>

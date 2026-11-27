@@ -24,6 +24,23 @@ benchmarks:
     # its own baseline. Without it, one series at the benchmark's default of 5000 tasks.
     tasks: [1000, 5000, 20000]
     minInterval: 6h   # optional, default 20h: how soon a series is queued again (each run still waits for the idle gate)
+  # engine comparison (scenarios of the "BPMN Engine Benchmark" video, see README)
+  - id: engine-startup
+    databases: [h2, postgresql]
+    branches: [main, release/2.2.x]
+    repetitions: 3
+  - id: scenario-a
+    databases: [h2, postgresql]
+    branches: [main, release/2.2.x]
+    repetitions: 3
+  - id: scenario-a-history-none
+    databases: [h2, postgresql]
+    branches: [main, release/2.2.x]
+    repetitions: 3
+  - id: scenario-b
+    databases: [h2, postgresql]
+    branches: [main, release/2.2.x]
+    repetitions: 3
 idle:
   minUserIdle: 15m
   maxLoad1: 2.0

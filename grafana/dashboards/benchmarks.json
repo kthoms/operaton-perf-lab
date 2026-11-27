@@ -482,6 +482,112 @@
           "rawSql": "select distinct on (r.branch, r.db) r.branch, r.db as \"database\", r.started_at as \"run\", left(r.commit_sha, 10) as \"commit\", r.segment,\n  (select percentile_cont(0.5) within group (order by value) from measurement where run_id=r.id and kpi='benchmark.median.duration') as \"median ms\",\n  (select min(value) from measurement where run_id=r.id and kpi='benchmark.iteration.duration') as \"min ms\",\n  (select max(value) from measurement where run_id=r.id and kpi='benchmark.iteration.duration') as \"max ms\",\n  (select count(*) from measurement where run_id=r.id and kpi='benchmark.median.duration') as repetitions\nfrom run r\nwhere r.kind='BENCHMARK' and r.source='branch' and r.status='SUCCESS' and r.benchmark=${benchmark:sqlstring} and r.branch in (${branch:sqlstring}) and r.db in (${db:sqlstring}) and r.segment in (${segment:sqlstring}) and $__timeFilter(r.started_at)\norder by r.branch, r.db, r.started_at desc"
         }
       ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Throughput per concurrency level ($benchmark)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "spanNulls": true,
+            "lineWidth": 1,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "last"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, r.branch || ' / ' || r.db || ' ' || (m.dims->>'metric') || ' [' || m.unit || '] (' || r.segment || ')' as metric,\n  percentile_cont(0.5) within group (order by m.value) as value\nfrom measurement m join run r on r.id=m.run_id\nwhere m.kpi='benchmark.metric' and m.dims->>'metric' like 'throughput.%' and r.kind='BENCHMARK' and r.source='branch' and r.status='SUCCESS' and r.benchmark=${benchmark:sqlstring} and r.branch in (${branch:sqlstring}) and r.db in (${db:sqlstring}) and r.segment in (${segment:sqlstring}) and $__timeFilter(r.started_at)\ngroup by r.id, r.started_at, r.branch, r.db, r.segment, m.dims->>'metric', m.unit\norder by 1"
+        }
+      ],
+      "description": "Process instances per second (instances of a batch / median batch time), median over the repetitions. Only the scenario-* benchmarks report it."
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Latency and memory metrics ($benchmark)",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "perflab-pg"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "spanNulls": true,
+            "lineWidth": 1,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "last"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "perflab-pg"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "select r.started_at as time, r.branch || ' / ' || r.db || ' ' || (m.dims->>'metric') || ' [' || m.unit || '] (' || r.segment || ')' as metric,\n  percentile_cont(0.5) within group (order by m.value) as value\nfrom measurement m join run r on r.id=m.run_id\nwhere m.kpi='benchmark.metric' and m.dims->>'metric' not like 'throughput.%' and r.kind='BENCHMARK' and r.source='branch' and r.status='SUCCESS' and r.benchmark=${benchmark:sqlstring} and r.branch in (${branch:sqlstring}) and r.db in (${db:sqlstring}) and r.segment in (${segment:sqlstring}) and $__timeFilter(r.started_at)\ngroup by r.id, r.started_at, r.branch, r.db, r.segment, m.dims->>'metric', m.unit\norder by 1"
+        }
+      ],
+      "description": "Derived metrics with their unit in the legend: per-instance latency percentiles (scenario-*), idle heap after GC and resident set size of a ready engine JVM (engine-startup). Median over the repetitions; not part of the regression detection."
     }
   ]
 }

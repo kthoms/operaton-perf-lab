@@ -25,8 +25,9 @@ class ConfigLoaderTest {
         assertThat(c.idle().heavyProcessNames()).containsExactly("java", "mvn", "gradle", "idea");
         assertThat(c.backupRetentionDays()).isEqualTo(14);
         assertThat(c.resultsDb().jdbcUrl()).isEqualTo("jdbc:postgresql://127.0.0.1:5433/perflab");
-        assertThat(c.benchmarks()).singleElement().satisfies(b -> {
-            assertThat(b.id()).isEqualTo("task-authorization");
+        assertThat(c.benchmarks()).extracting(b -> b.id()).containsExactly(
+                "task-authorization", "engine-startup", "scenario-a", "scenario-a-history-none", "scenario-b");
+        assertThat(c.benchmarks().getFirst()).satisfies(b -> {
             assertThat(b.databases()).containsExactly("h2", "postgresql");
             assertThat(b.repetitions()).isEqualTo(5);
         });

@@ -12,14 +12,20 @@ import java.util.stream.Collectors;
 
 /**
  * Result of one benchmark execution, written as
- * {@code {"benchmark":..,"database":..,"params":{..},"iterationsMs":[..],"operationsMs":{"<op>":[..]}}}.
+ * {@code {"benchmark":..,"database":..,"params":{..},"iterationsMs":[..],"operationsMs":{"<op>":[..]},
+ * "metrics":{"<name>":{"value":..,"unit":".."}}}}. Metrics (throughput, memory, latency
+ * percentiles) are derived values of the whole run; the key is left out when there are none.
  */
 public record BenchmarkResult(
     String benchmark,
     String database,
     Map<String, Integer> params,
     List<Double> iterationsMs,
-    Map<String, List<Double>> operationsMs) {
+    Map<String, List<Double>> operationsMs,
+    Map<String, Metric> metrics) {
+
+  /** One derived value of a run, e.g. {@code throughput} in {@code 1/s}. */
+  public record Metric(double value, String unit) {}
 
   public BenchmarkResult {
     params = new LinkedHashMap<>(params);
@@ -27,6 +33,16 @@ public record BenchmarkResult(
     Map<String, List<Double>> ops = new LinkedHashMap<>();
     operationsMs.forEach((name, values) -> ops.put(name, List.copyOf(values)));
     operationsMs = ops;
+    metrics = new LinkedHashMap<>(metrics);
+  }
+
+  public BenchmarkResult(
+      String benchmark,
+      String database,
+      Map<String, Integer> params,
+      List<Double> iterationsMs,
+      Map<String, List<Double>> operationsMs) {
+    this(benchmark, database, params, iterationsMs, operationsMs, Map.of());
   }
 
   public String toJson() {
@@ -38,17 +54,32 @@ public record BenchmarkResult(
         operationsMs.entrySet().stream()
             .map(e -> quote(e.getKey()) + ":" + array(e.getValue()))
             .collect(Collectors.joining(",", "{", "}"));
+    String metricsJson =
+        metrics.isEmpty()
+            ? ""
+            : metrics.entrySet().stream()
+                .map(e -> quote(e.getKey()) + ":{\"value\":" + number(e.getValue().value())
+                    + ",\"unit\":" + quote(e.getValue().unit()) + "}")
+                .collect(Collectors.joining(",", ",\"metrics\":{", "}"));
     return "{\"benchmark\":" + quote(benchmark)
         + ",\"database\":" + quote(database)
         + ",\"params\":" + paramsJson
         + ",\"iterationsMs\":" + array(iterationsMs)
         + ",\"operationsMs\":" + operationsJson
+        + metricsJson
         + "}";
+  }
+
+  private static String number(double v) {
+    if (!Double.isFinite(v)) {
+      throw new IllegalArgumentException("metric value is not finite: " + v);
+    }
+    return String.format(Locale.ROOT, "%.3f", v);
   }
 
   private static String array(List<Double> ms) {
     return ms.stream()
-        .map(v -> String.format(Locale.ROOT, "%.3f", v))
+        .map(BenchmarkResult::number)
         .collect(Collectors.joining(",", "[", "]"));
   }
 

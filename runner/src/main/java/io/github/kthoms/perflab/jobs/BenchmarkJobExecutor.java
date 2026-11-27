@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -47,7 +48,14 @@ public class BenchmarkJobExecutor implements JobExecutor {
 
   private static final System.Logger LOG = System.getLogger(BenchmarkJobExecutor.class.getName());
 
-  static final String BENCHMARK_ID = "task-authorization";
+  /**
+   * The benchmarks of the module {@code benchmarks} ({@code BenchmarkMain.IDS}); the runner passes
+   * the job's id as {@code -Dbenchmark.id}.
+   */
+  /** The only benchmark with a task count ({@code <id>@<tasks>} series). */
+  static final String TASK_SIZED = "task-authorization";
+  static final Set<String> BENCHMARK_IDS =
+      Set.of("task-authorization", "engine-startup", "scenario-a", "scenario-a-history-none", "scenario-b");
   static final String H2 = "h2";
   static final String POSTGRESQL = "postgresql";
   static final int PG_PORT = 5434;
@@ -125,7 +133,7 @@ public class BenchmarkJobExecutor implements JobExecutor {
 
   private Outcome benchmark(Job job, CancellationToken token) throws IOException, InterruptedException {
     String baseId = BenchmarkConfig.baseId(job.benchmark());
-    if (!BENCHMARK_ID.equals(baseId)) {
+    if (!BENCHMARK_IDS.contains(baseId)) {
       return new NotApplicable("unknown benchmark '" + job.benchmark() + "'");
     }
     OptionalInt tasks;
@@ -133,6 +141,9 @@ public class BenchmarkJobExecutor implements JobExecutor {
       tasks = BenchmarkConfig.tasksOf(job.benchmark());
     } catch (NumberFormatException e) {
       return new NotApplicable("benchmark '" + job.benchmark() + "' has no valid task count after '@'");
+    }
+    if (tasks.isPresent() && !TASK_SIZED.equals(baseId)) {
+      return new NotApplicable("benchmark '" + baseId + "' has no task count, but the series is '" + job.benchmark() + "'");
     }
     if (!H2.equals(job.db()) && !POSTGRESQL.equals(job.db())) {
       return new NotApplicable("unsupported database '" + job.db() + "'");
@@ -229,6 +240,7 @@ public class BenchmarkJobExecutor implements JobExecutor {
         Files.deleteIfExists(output);
         List<String> cmd = new ArrayList<>(mvn);
         cmd.add("-o");
+        cmd.add("-Dbenchmark.id=" + baseId);
         cmd.addAll(databaseArgs(job.db()));
         cmd.add("-Dbenchmark.output=" + output);
         tasks.ifPresent(t -> cmd.add("-Dbenchmark.tasks=" + t));

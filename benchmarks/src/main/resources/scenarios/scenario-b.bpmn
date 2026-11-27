@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Scenario B of the BPMN engine comparison (see scenarios/NOTICE.md): start, one business rule task evaluating the
+     100-rule decision table Pricing (pricing.dmn, COLLECT + SUM) into fee, end. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:operaton="http://operaton.org/schema/1.0/bpmn"
+                  id="Definitions_ScenarioB" targetNamespace="http://example.com/bench">
+  <bpmn:process id="ScenarioB" isExecutable="true" operaton:historyTimeToLive="P1D">
+    <bpmn:startEvent id="Start" />
+    <bpmn:sequenceFlow id="f1" sourceRef="Start" targetRef="Rules" />
+    <bpmn:businessRuleTask id="Rules" name="Pricing" operaton:decisionRef="Pricing"
+                           operaton:mapDecisionResult="singleEntry" operaton:resultVariable="fee" />
+    <bpmn:sequenceFlow id="f2" sourceRef="Rules" targetRef="End" />
+    <bpmn:endEvent id="End" />
+  </bpmn:process>
+</bpmn:definitions>
