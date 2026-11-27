@@ -64,7 +64,9 @@ class BenchmarkJobExecutorTest {
             base.upstreamUrl(),
             base.resultsDb(),
             base.branches(),
-            List.of(new BenchmarkConfig("task-authorization", List.of("h2", "postgresql"), List.of("main"), 2)),
+            List.of(
+                new BenchmarkConfig("task-authorization", List.of("h2", "postgresql"), List.of("main"), 2),
+                new BenchmarkConfig("scenario-b", List.of("h2"), List.of("main"), 1)),
             base.idle());
     Files.createDirectories(perfLabHome.resolve("benchmarks"));
     Files.writeString(perfLabHome.resolve("benchmarks/pom.xml"), "<project/>");
@@ -141,7 +143,8 @@ class BenchmarkJobExecutorTest {
     assertThat(runner.commands.get(3)).contains("-f", pom, "-o", "-Doperaton.version=" + VERSION, "compile");
     assertThat(runner.commands.subList(4, 6))
         .allSatisfy(cmd -> assertThat(cmd)
-            .contains("-f", pom, "-o", repo, "-Doperaton.version=" + VERSION, "-Dbenchmark.database=h2", "exec:exec"));
+            .contains("-f", pom, "-o", repo, "-Doperaton.version=" + VERSION, "-Dbenchmark.id=task-authorization",
+                "-Dbenchmark.database=h2", "exec:exec"));
     assertThat(runner.commands).hasSize(6).noneMatch(BenchmarkJobExecutorTest::isDocker);
     assertThat(runner.envs).allSatisfy(env -> assertThat(env).containsEntry("JAVA_HOME", "/opt/jdk21"));
     assertThat(runner.tokens).allMatch(t -> t == token);
@@ -452,6 +455,30 @@ class BenchmarkJobExecutorTest {
   }
 
   @Test
+  void engineComparisonBenchmarkRunsWithItsId() {
+    Completed done = (Completed) executor.execute(job("scenario-b", "h2"), token);
+
+    assertThat(runner.commands.getLast()).contains("-Dbenchmark.id=scenario-b", "exec:exec");
+    assertThat(done.run().benchmark()).isEqualTo("scenario-b");
+    assertThat(done.run().status()).isEqualTo("SUCCESS");
+    assertThat(done.measurements())
+        .contains(new Measurement("benchmark.median.duration", 2.0, "ms",
+            Map.of("benchmark", "scenario-b", "repetition", "1")));
+  }
+
+  @Test
+  void taskCountOnlyAppliesToTaskAuthorization() {
+    assertThat(executor.execute(job("scenario-b@1000", "h2"), token)).isInstanceOf(NotApplicable.class);
+    assertThat(runner.commands).isEmpty();
+  }
+
+  @Test
+  void knownButUnconfiguredBenchmarkIsNotApplicable() {
+    assertThat(executor.execute(job("engine-startup", "h2"), token)).isInstanceOf(NotApplicable.class);
+    assertThat(runner.commands).isEmpty();
+  }
+
+  @Test
   void unknownBenchmarkOrDatabaseIsNotApplicable() {
     assertThat(executor.execute(job("other", "h2"), token)).isInstanceOf(NotApplicable.class);
     assertThat(executor.execute(job("oracle"), token)).isInstanceOf(NotApplicable.class);
@@ -534,7 +561,8 @@ class BenchmarkJobExecutorTest {
             output,
             result != null
                 ? result
-                : "{\"benchmark\":\"task-authorization\",\"database\":\"" + arg(cmd, "-Dbenchmark.database=")
+                : "{\"benchmark\":\"" + arg(cmd, "-Dbenchmark.id=") + "\",\"database\":\""
+                    + arg(cmd, "-Dbenchmark.database=")
                     + "\",\"params\":" + (cmd.stream().anyMatch(a -> a.startsWith("-Dbenchmark.tasks="))
                         ? "{\"tasks\":" + arg(cmd, "-Dbenchmark.tasks=") + "}" : "{}")
                     + ",\"iterationsMs\":[1.0,2.0,3.0],"

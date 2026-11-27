@@ -175,4 +175,61 @@ class DashboardBandIT {
       assertThat(hl[1]).isEqualTo(10.0);
     });
   }
+
+  @Test
+  void metricPanelsShowTheMedianOfTheRepetitionsWithTheirUnit() throws Exception {
+    long r = run("BENCHMARK", "s", "branch", "h2", "b1");
+    try (Connection c = db.dataSource().getConnection();
+        PreparedStatement ps = c.prepareStatement(
+            "insert into measurement(run_id, kpi, value, unit, dims) values (?,'benchmark.metric',?,?,?::jsonb)")) {
+      Object[][] rows = {
+        {100.0, "1/s", "throughput.concurrency-10", "1"},
+        {300.0, "1/s", "throughput.concurrency-10", "2"},
+        {200.0, "1/s", "throughput.concurrency-10", "3"},
+        {5.0, "ms", "latencyP95.concurrency-10", "1"},
+        {7.0, "ms", "latencyP95.concurrency-10", "2"},
+      };
+      for (Object[] row : rows) {
+        ps.setLong(1, r);
+        ps.setDouble(2, (Double) row[0]);
+        ps.setString(3, (String) row[1]);
+        ps.setString(4, "{\"benchmark\":\"b1\",\"metric\":\"" + row[2] + "\",\"repetition\":\"" + row[3] + "\"}");
+        ps.addBatch();
+      }
+      ps.executeBatch();
+    }
+
+    assertThat(series(querySql("Throughput per concurrency level ($benchmark)")))
+        .containsExactly(Map.entry("main / h2 throughput.concurrency-10 [1/s] (s)", 200.0));
+    assertThat(series(querySql("Latency and memory metrics ($benchmark)")))
+        .containsExactly(Map.entry("main / h2 latencyP95.concurrency-10 [ms] (s)", 6.0));
+  }
+
+  static String querySql(String title) throws Exception {
+    JsonNode d = new ObjectMapper().readTree(Path.of("../grafana/dashboards", "benchmarks.json").toFile());
+    for (JsonNode p : d.path("panels")) {
+      if (p.path("title").asText().equals(title)) {
+        return p.path("targets").get(0).path("rawSql").asText();
+      }
+    }
+    throw new AssertionError("no panel " + title);
+  }
+
+  /** metric -> value of a time series query, variables interpolated like Grafana would. */
+  Map<String, Double> series(String sql) throws Exception {
+    String q = sql.replace("${benchmark:sqlstring}", "'b1'")
+        .replace("${branch:sqlstring}", "'main'")
+        .replace("${db:sqlstring}", "'h2'")
+        .replace("${segment:sqlstring}", "'s'")
+        .replace("$__timeFilter(r.started_at)", "true");
+    Map<String, Double> out = new LinkedHashMap<>();
+    try (Connection c = db.dataSource().getConnection();
+        var st = c.createStatement();
+        ResultSet rs = st.executeQuery(q)) {
+      while (rs.next()) {
+        out.put(rs.getString(2), rs.getDouble(3));
+      }
+    }
+    return out;
+  }
 }

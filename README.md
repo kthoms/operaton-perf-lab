@@ -73,6 +73,49 @@ their expected duration.
 - Activity samples are recorded every poll interval, and while a job runs at most once per poll
   interval from the job's cancellation check, so the history has no gaps during long builds.
 
+## Benchmarks
+
+The module `benchmarks/` holds every benchmark; the runner passes the job's id as `-Dbenchmark.id`
+(`BenchmarkMain`). Each one runs embedded in a forked JVM on the branch JDK, against H2 in memory or a
+fresh PostgreSQL 17 container, with an empty schema per run.
+
+| Id | What it measures |
+|---|---|
+| `task-authorization` | task queries with authorization (operaton/operaton#3202) |
+| `engine-startup` | startup race: fresh JVM to ready engine (schema, deployment, one verified instance) |
+| `scenario-a` | scenario A throughput, history `full` |
+| `scenario-a-history-none` | scenario A throughput, history `none` (the history switch) |
+| `scenario-b` | scenario B throughput: a 100-rule DMN table, history `full` |
+
+### Engine comparison scenarios
+
+`engine-startup` and `scenario-*` follow the video
+["BPMN Engine Benchmark: CIB seven, Operaton, Flowable, Kogito and Camunda 8 Speed Test"](https://www.youtube.com/watch?v=-7zLxZNt198)
+and its repository [camunda7-alternatives-benchmark](https://github.com/Marcin-Pankowski/camunda7-alternatives-benchmark)
+(Apache 2.0; the DMN table and its rules are copied from there, see
+`benchmarks/src/main/resources/scenarios/NOTICE.md`).
+
+- Scenario A: start, three service tasks with `${counter + 1}`, end. Every instance is started with
+  `executeWithVariablesInReturn` and must return `counter = 3`.
+- Scenario B: start, business rule task on the `Pricing` table (100 rules, COLLECT + SUM), end. Inputs are
+  random in the ranges of the video's load script but with a fixed seed, so every run evaluates the same
+  requests; each instance must return the fee computed from the same rules in Java.
+- Engine as in the video's Spring Boot app: UUID ids, a pool of 10 connections, no job executor.
+- One iteration runs a batch of `benchmark.instances` (2000) instances for each concurrency level of
+  `benchmark.concurrency` (1, 10, 25, 50 threads, the video's virtual users); operation `concurrency-<n>` is
+  the batch's wall time. Defaults: 2 warmup and 10 timed iterations (on PostgreSQL about 3–4 min per repetition). A single wrong result fails the run.
+- Derived metrics per run (`benchmark.metric`, shown in the panels "Throughput per concurrency level" and
+  "Latency and memory metrics", not part of the regression detection): `throughput.concurrency-<n>`
+  (instances/s from the median batch time), `latencyP50/P95/P99.concurrency-<n>` of single instances, and for
+  `engine-startup` `idleHeapAfterGc` and `idleRss` of the ready JVM.
+- `engine-startup` forks `StartupProbe` per iteration (1 warmup, 10 timed) with JVM defaults; operations
+  `jvmBoot`, `buildEngine` (incl. schema creation), `deploy`, `firstInstance`.
+
+Not covered, because they need the video's Kubernetes setup rather than one engine under test: scaling over
+several pods behind a load balancer, REST and network overhead, and the comparison with the other engines
+(CIB seven could later run the same scenarios). The numbers are for trends of Operaton commits on this Mac,
+not for comparison with the video's absolute values.
+
 ## Dashboards
 
 Trend panels show only scheduled runs (`run.source = 'branch'`); manual and bisect runs of an

@@ -14,7 +14,9 @@ import java.util.Map;
 /**
  * Reads a benchmark result file ({@code {"benchmark":..,"iterationsMs":[..],"operationsMs":{..}}}):
  * one {@code benchmark.iteration.duration} per iteration (1-based), their median, and the median
- * of each operation. A malformed file throws {@link UncheckedIOException} or {@link
+ * of each operation, and one {@code benchmark.metric} per derived metric ({@code
+ * "metrics":{"<name>":{"value":..,"unit":".."}}}, e.g. throughput in 1/s; dims benchmark and
+ * metric). A malformed file throws {@link UncheckedIOException} or {@link
  * IllegalArgumentException}; a file of another benchmark or database {@link IllegalStateException}.
  */
 public final class BenchmarkJsonExtractor {
@@ -101,6 +103,26 @@ public final class BenchmarkJsonExtractor {
                 median(values),
                 "ms",
                 Map.of("benchmark", series, "operation", op.getKey())));
+      }
+    }
+    JsonNode metrics = root.path("metrics");
+    if (!metrics.isMissingNode()) {
+      if (!metrics.isObject()) {
+        throw new IllegalArgumentException(json + ": metrics is not an object");
+      }
+      for (Iterator<Map.Entry<String, JsonNode>> it = metrics.fields(); it.hasNext(); ) {
+        Map.Entry<String, JsonNode> metric = it.next();
+        JsonNode value = metric.getValue().path("value");
+        JsonNode unit = metric.getValue().path("unit");
+        if (!value.isNumber() || !unit.isTextual()) {
+          throw new IllegalArgumentException(json + ": metric " + metric.getKey() + " needs a numeric value and a unit");
+        }
+        out.add(
+            new Measurement(
+                "benchmark.metric",
+                value.asDouble(),
+                unit.asText(),
+                Map.of("benchmark", series, "metric", metric.getKey())));
       }
     }
     return out;
